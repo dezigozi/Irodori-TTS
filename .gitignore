@@ -219,3 +219,7 @@ gradio_outputs/
 gradio_outputs_voicedesign/
 outputs/
 data/
+
+# たかたか本人の声（個人データ・公開禁止）と焼いたlatent
+refs/
+outputs/
