@@ -1,6 +1,10 @@
 {
   "takataka": {
     "name": "たかたか（本人）",
-    "clips": ["refs/takataka_a.wav", "refs/takataka_b.wav", "refs/takataka_c.wav"]
+    "clips": [
+      "refs/takataka_a.wav",
+      "refs/takataka_b.wav",
+      "refs/takataka_c.wav"
+    ]
   }
 }

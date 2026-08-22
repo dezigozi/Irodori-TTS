@@ -84,3 +84,29 @@ curl -X POST http://127.0.0.1:3952/synthesis -H "Content-Type: application/json"
   "誰か":     { "name": "だれかの声",       "clips": ["refs/dareka_a.wav"] }
 }
 ```
+
+## いろとりスタジオ（app/）— 声のデータベース作成＋原稿読み上げ保存アプリ
+Tauri v2 のデスクトップアプリ（`app/`）。Vite 無し・`app/src/index.html` 1枚・`frontendDist: ../src` の
+かべちゃん方式なので **dev ポート不要**。バックエンドは上の常駐サーバ（:3952）をそのまま使い、
+アプリ側の Rust は「サーバ起動・設定保存・Finder/ファイル操作」だけ。話者操作や合成はフロントの fetch が直接叩く。
+
+- 上段「声のデータベース」: 声の元ファイル（m4a/wav/mp3/mp4…）をドロップ → 名前を入れる → `POST /speakers`
+  → refs/ に 10秒×最大3本のクリップ＋latent ができて `speakers.json` に登録される（3秒前後）
+- 下段「原稿 → 音声」: 話者・抑揚（flat/natural/rich）・演技メモ（自由キャプション）・速さ → `POST /render`
+  → ジョブをポーリングして進捗バー → **48kHz/mono/16bit WAV** を保存先（既定 `~/Music/いろとりスタジオ/`）に保存、そのまま再生
+- 設定は `~/Library/Application Support/com.takataka.irodoristudio/settings.json`、サーバログは同 `server.log`
+- ビルド: `cd app && npm install && npx tauri build` → `app/src-tauri/target/release/bundle/macos/いろとりスタジオ.app` を /Applications へ
+- アイコン: `app/app-icon.svg` → `rsvg-convert` で `app-icon.png` → `npx tauri icon app-icon.png`
+
+### server.py に足した API（0.2.0）
+| API | 用途 |
+|---|---|
+| `POST /speakers` `{name, source_path, clip_seconds=10, max_clips=3}` | ffprobe→ffmpeg で `refs/<id>_full.wav`（mono/pcm_s24le/元SR維持、48k超は48kへ）→ 均等配置で `refs/<id>_a..c.wav`（無音気味なら5秒ずらし）→ latent を焼いて `speakers.json` に原子的に追記。id は `spk_<epoch>` |
+| `DELETE /speakers/<id>` | speakers.json から外し、`refs/<id>_*.wav` と latent を削除。`takataka` は保護、最後の1人も消せない |
+| `POST /synthesis` 追加引数 | `caption`（自由文、expression より優先）／`sample_rate`（22050 既定・48000）。既存引数は変更なし |
+| `POST /render` `{speaker, text, expression|caption, rate, num_steps?, out_path, pause_ms=350}` | 原稿を `。！？!?改行` で切って ≤110文字にまとめ、チャンクごとに合成→無音を挟んで連結→48kHz WAV を一時ファイル経由で保存。ジョブIDを返す |
+| `GET /jobs/<id>` / `POST /jobs/<id>/cancel` | 進捗 `{status, done, total, out_path, seconds, error}`／チャンク境界で中断 |
+- CORS（`Access-Control-Allow-Origin: *` と OPTIONS）を返す。Tauri の webview から fetch するため
+- `/version` の `sample_rate` は econte 互換のため 22050 のまま。`native_sample_rate: 48000` を追加
+- `GET /speakers` は `{id,name,clips}` に `clip_paths/source/created_at/protected` を**足しただけ**（econte の読み方は壊れない）
+- 実測: 話者追加 3秒（2分42秒の m4a）／レンダーは1チャンク 15秒前後（2チャンク=15.6秒の音声で約35秒）

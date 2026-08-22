@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff3e0"/><stop offset="1" stop-color="#f1e4ff"/>
+    </linearGradient>
+    <linearGradient id="mic" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6a6f85"/><stop offset="1" stop-color="#3a3f4b"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" rx="228" fill="url(#bg)"/>
+  <!-- 色とりどりの声の波 -->
+  <g stroke-linecap="round" stroke-width="58" fill="none">
+    <line x1="176" y1="512" x2="176" y2="512" stroke="#ff7a7a"><animate/></line>
+    <line x1="176" y1="440" x2="176" y2="584" stroke="#ff7a7a"/>
+    <line x1="276" y1="360" x2="276" y2="664" stroke="#ffb347"/>
+    <line x1="748" y1="360" x2="748" y2="664" stroke="#5fb0ff"/>
+    <line x1="848" y1="440" x2="848" y2="584" stroke="#b07aff"/>
+  </g>
+  <!-- マイク -->
+  <rect x="432" y="200" width="160" height="330" rx="80" fill="url(#mic)"/>
+  <path d="M372 470 a140 140 0 0 0 280 0" stroke="#5fd37a" stroke-width="46" fill="none" stroke-linecap="round"/>
+  <rect x="484" y="600" width="56" height="110" rx="20" fill="#3a3f4b"/>
+  <rect x="400" y="700" width="224" height="52" rx="26" fill="#3a3f4b"/>
+  <!-- 波形の下線 -->
+  <path d="M300 840 q40 -60 80 0 t80 0 t80 0 t80 0 t80 0 t80 0" stroke="#ff6fa5" stroke-width="22" fill="none" stroke-linecap="round"/>
+</svg>

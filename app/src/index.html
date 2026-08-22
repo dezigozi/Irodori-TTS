@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<title>いろとりスタジオ</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+    background: linear-gradient(160deg, #eef6fb 0%, #fdeef5 50%, #fff8e6 100%);
+    color: #3a3f4b; user-select: none;
+  }
+  textarea, input { user-select: text; }
+  .view { height: 100%; display: flex; flex-direction: column; padding: 16px 22px 12px; gap: 12px; overflow-y: auto; }
+  [hidden] { display: none !important; }
+  header { display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 20px; font-weight: 800; letter-spacing: .02em; }
+  header h1 span { background: linear-gradient(90deg,#ff7a7a,#ffb347,#5fd37a,#5fb0ff,#b07aff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header p { font-size: 12px; color: #8a90a0; flex: 1; }
+  .pill { font-size: 11.5px; font-weight: 700; padding: 5px 11px; border-radius: 999px; background: #fff; border: 1px solid #e3e7f0; color: #7a8194; display: flex; align-items: center; gap: 6px; }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #c9ced9; }
+  .pill.on .dot { background: #2f9e6b; box-shadow: 0 0 0 3px rgba(47,158,107,.18); }
+  .pill.busy .dot { background: #f0a928; }
+  .pill.off .dot { background: #d64a66; }
+
+  .btn { font-family: inherit; font-weight: 700; border: none; cursor: pointer; border-radius: 12px; transition: transform .1s, opacity .15s; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:disabled { opacity: .45; cursor: default; transform: none; }
+  .btn-primary { font-size: 15px; color: #fff; padding: 11px 26px; background: linear-gradient(135deg, #ff8a65, #b06dff); box-shadow: 0 4px 14px rgba(176,109,255,.35); }
+  .btn-sub { font-size: 13px; color: #5a6274; padding: 8px 14px; background: rgba(255,255,255,.85); border: 1px solid #dde2ee; }
+  .btn-mini { font-size: 12px; color: #5a6274; padding: 5px 10px; background: rgba(255,255,255,.85); border: 1px solid #dde2ee; border-radius: 9px; }
+  .btn-danger { color: #d64a66; }
+
+  .card { background: rgba(255,255,255,.62); backdrop-filter: blur(14px); border-radius: 18px; padding: 14px 18px; box-shadow: 0 2px 12px rgba(60,70,110,.07); display: flex; flex-direction: column; gap: 10px; }
+  .card h2 { font-size: 14px; font-weight: 800; color: #4a5166; display: flex; align-items: center; gap: 8px; }
+  .card h2 small { font-weight: 500; color: #8a90a0; font-size: 11.5px; }
+
+  /* 話者 */
+  .spk-row { display: flex; gap: 12px; align-items: stretch; }
+  #spk-list { flex: 1; display: flex; flex-wrap: wrap; gap: 10px; align-content: flex-start; min-height: 84px; }
+  .spk { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: #fff; border: 2px solid transparent; cursor: pointer; min-width: 190px; box-shadow: 0 1px 6px rgba(60,70,110,.06); transition: border-color .15s; }
+  .spk.active { border-color: #b06dff; box-shadow: 0 0 0 3px rgba(176,109,255,.15); }
+  .spk .avatar { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: #fff; flex: none; }
+  .spk .meta { flex: 1; min-width: 0; }
+  .spk .name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .spk .sub { font-size: 11px; color: #8a90a0; }
+  .spk .del { opacity: 0; transition: opacity .15s; }
+  .spk:hover .del { opacity: 1; }
+  #drop { width: 250px; flex: none; border: 2px dashed #c9b7ff; border-radius: 16px; background: rgba(255,255,255,.5); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 14px 12px; text-align: center; cursor: pointer; transition: all .15s; }
+  #drop:hover, #drop.dragover { border-color: #b06dff; background: rgba(176,109,255,.10); transform: scale(1.02); }
+  #drop .big { font-size: 28px; }
+  #drop .t { font-size: 13px; font-weight: 700; color: #5a6274; }
+  #drop .s { font-size: 11px; color: #8a90a0; line-height: 1.4; }
+
+  /* 原稿 */
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  label.f { font-size: 12px; color: #6b7180; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+  select, input[type=text], input[type=number] { font-family: inherit; font-size: 13px; padding: 7px 10px; border-radius: 10px; border: 1px solid #dde2ee; background: #fff; color: #3a3f4b; outline: none; }
+  select:focus, input:focus, textarea:focus { border-color: #b06dff; }
+  input[type=range] { accent-color: #b06dff; width: 120px; }
+  textarea { font-family: inherit; font-size: 14px; line-height: 1.7; padding: 12px 14px; border-radius: 14px; border: 1px solid #dde2ee; background: #fff; color: #3a3f4b; outline: none; resize: vertical; min-height: 150px; width: 100%; }
+  .counter { font-size: 11.5px; color: #8a90a0; text-align: right; }
+  .seg { display: inline-flex; border: 1px solid #dde2ee; border-radius: 10px; overflow: hidden; background: #fff; }
+  .seg button { font-family: inherit; font-size: 12.5px; font-weight: 700; padding: 6px 12px; border: none; background: transparent; color: #7a8194; cursor: pointer; }
+  .seg button.on { background: linear-gradient(135deg, #ff8a65, #b06dff); color: #fff; }
+  #caption { flex: 1; min-width: 220px; }
+
+  .progress { height: 8px; border-radius: 6px; background: #e9ecf3; overflow: hidden; flex: 1; }
+  .progress > div { height: 100%; width: 0; background: linear-gradient(90deg,#ff8a65,#b06dff); transition: width .3s; }
+  #status { font-size: 12.5px; color: #6b7180; line-height: 1.5; white-space: pre-wrap; flex: 1; }
+  .err { color: #d64a66 !important; }
+  .ok { color: #2f9e6b !important; }
+  audio { height: 34px; width: 100%; }
+
+  /* 出力一覧 */
+  #outs { display: flex; flex-direction: column; gap: 6px; max-height: 190px; overflow-y: auto; }
+  .out { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 10px; background: #fff; font-size: 12.5px; }
+  .out .n { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 700; }
+  .out .m { color: #8a90a0; font-size: 11px; }
+
+  /* モーダル */
+  #modal { position: fixed; inset: 0; background: rgba(60,70,110,.45); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  .dialog { background: #fff; border-radius: 18px; padding: 20px 22px; width: 440px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
+  .dialog h3 { font-size: 15px; }
+  .dialog .path { font-size: 11.5px; color: #8a90a0; word-break: break-all; }
+  .dialog input[type=text] { width: 100%; font-size: 14px; }
+  .dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid #d9c7ff; border-top-color: #b06dff; border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -2px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="view">
+  <header>
+    <h1>🎨 <span>いろとりスタジオ</span></h1>
+    <p>声をドロップして声データベースを作り、原稿を読み上げて保存する</p>
+    <div id="srv" class="pill off"><span class="dot"></span><span id="srv-text">サーバ確認中…</span></div>
+    <button id="srv-btn" class="btn btn-sub" hidden>▶ サーバを起動</button>
+  </header>
+
+  <!-- ===== 声のデータベース ===== -->
+  <section class="card">
+    <h2>🎤 声のデータベース <small id="spk-count"></small></h2>
+    <div class="spk-row">
+      <div id="spk-list"></div>
+      <div id="drop">
+        <div class="big">🎧</div>
+        <div class="t">声の元ファイルをここにドロップ</div>
+        <div class="s">m4a / wav / mp3 / flac / mp4 など<br>（30秒〜2分くらいの、なるべく高音質な声）<br>クリックでファイル選択</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 原稿 → 音声 ===== -->
+  <section class="card">
+    <h2>📝 原稿 → 音声 <small>選んだ声で読み上げてWAV（48kHz）に保存</small></h2>
+    <div class="row">
+      <label class="f">声 <select id="speaker"></select></label>
+      <label class="f">抑揚
+        <span class="seg" id="expr">
+          <button data-v="flat">そのまま</button>
+          <button data-v="natural" class="on">自然</button>
+          <button data-v="rich">豊か</button>
+        </span>
+      </label>
+      <label class="f">速さ <input type="range" id="rate" min="120" max="260" step="10" value="180"><span id="rate-v">1.00x</span></label>
+    </div>
+    <div class="row">
+      <label class="f" style="flex:1">演技メモ（任意）<input type="text" id="caption" placeholder="例: 落ち着いた声で、ゆっくり穏やかに（入れると抑揚の指定より優先）"></label>
+    </div>
+    <textarea id="script" placeholder="ここに原稿を貼ってな。句点「。」や改行で区切って順番に読み上げるで。空行は段落の切れ目として少し間をあける。"></textarea>
+    <div class="counter"><span id="chars">0</span> 文字</div>
+    <div class="row">
+      <label class="f">ファイル名 <input type="text" id="fname" style="width:260px" placeholder="自動（日時_声）"> .wav</label>
+      <label class="f">保存先 <span id="outdir" style="font-weight:500;color:#8a90a0;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span></label>
+      <button id="outdir-btn" class="btn btn-mini">変更</button>
+      <button id="outdir-open" class="btn btn-mini">Finderで開く</button>
+    </div>
+    <div class="row">
+      <button id="preview-btn" class="btn btn-sub">🔊 試し聞き（先頭の1文）</button>
+      <button id="render-btn" class="btn btn-primary">💾 生成して保存</button>
+      <button id="cancel-btn" class="btn btn-sub" hidden>■ 中断</button>
+      <div class="progress"><div id="bar"></div></div>
+      <span id="prog" style="font-size:12px;color:#8a90a0;min-width:60px;text-align:right"></span>
+    </div>
+    <div id="status"></div>
+    <audio id="player" controls hidden></audio>
+  </section>
+
+  <!-- ===== 出力一覧 ===== -->
+  <section class="card">
+    <h2>📂 最近の出力 <small>クリックで再生</small></h2>
+    <div id="outs"></div>
+  </section>
+</div>
+
+<!-- 話者名入力 -->
+<div id="modal" hidden>
+  <div class="dialog">
+    <h3>🎤 新しい声を登録</h3>
+    <div class="path" id="m-path"></div>
+    <input type="text" id="m-name" placeholder="声の名前（例: 社長の声、ナレーター太郎）">
+    <div class="row" style="font-size:12px;color:#6b7180">
+      <label class="f">1クリップ <input type="number" id="m-sec" value="10" min="3" max="30" style="width:64px"> 秒</label>
+      <label class="f">最大 <input type="number" id="m-n" value="3" min="1" max="6" style="width:56px"> 本</label>
+    </div>
+    <div id="m-status" style="font-size:12.5px;color:#6b7180;min-height:18px"></div>
+    <div class="actions">
+      <button id="m-cancel" class="btn btn-sub">やめる</button>
+      <button id="m-ok" class="btn btn-primary" style="font-size:13px;padding:9px 20px">登録する</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const { invoke, convertFileSrc } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
+
+const AUDIO_EXT = ["m4a","wav","mp3","aac","flac","ogg","oga","opus","mp4","mov","aiff","aif","caf","wma","webm","mkv"];
+const COLORS = ["#ff8a65","#5fb0ff","#5fd37a","#ffb347","#b07aff","#ff6fa5","#35c5c5"];
+let serverUrl = "http://127.0.0.1:3952";
+let settings = { outputDir: "", speaker: "", expression: "natural", rate: 180 };
+let speakers = [];
+let running = false;
+let currentJob = null;
+let pendingPath = null;
+
+const $ = id => document.getElementById(id);
+const statusEl = $("status");
+function setStatus(msg, cls) { statusEl.textContent = msg || ""; statusEl.className = cls || ""; }
+function fmtTime(t) { const d = new Date(t * 1000); return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
+function fmtSize(b) { return b > 1048576 ? (b/1048576).toFixed(1)+" MB" : Math.round(b/1024)+" KB"; }
+function colorOf(id) { let h = 0; for (const c of id) h = (h*31 + c.charCodeAt(0)) >>> 0; return COLORS[h % COLORS.length]; }
+
+async function api(method, path, body) {
+  const r = await fetch(serverUrl + path, {
+    method, headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const ct = r.headers.get("content-type") || "";
+  if (ct.includes("audio/")) {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.blob();
+  }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+
+/* ===== サーバ状態 ===== */
+async function refreshServer() {
+  const st = await invoke("server_status");
+  running = st.running;
+  const pill = $("srv");
+  pill.className = "pill " + (running ? "on" : "off");
+  $("srv-text").textContent = running ? `いろとりTTS 稼働中（${st.device}）` : "いろとりTTS 未起動";
+  $("srv-btn").hidden = running;
+  if (running) await loadSpeakers();
+  return running;
+}
+$("srv-btn").addEventListener("click", async () => {
+  $("srv").className = "pill busy"; $("srv-text").textContent = "サーバ起動中…（モデル読み込みに20秒前後）";
+  $("srv-btn").disabled = true;
+  try { await invoke("launch_server"); await refreshServer(); setStatus("サーバが起動したで！", "ok"); }
+  catch (e) { setStatus("起動失敗: " + e, "err"); $("srv").className = "pill off"; $("srv-text").textContent = "起動失敗"; }
+  $("srv-btn").disabled = false;
+});
+
+/* ===== 話者 ===== */
+async function loadSpeakers() {
+  try { speakers = await api("GET", "/speakers"); }
+  catch (e) { setStatus("話者一覧が取れへん: " + e, "err"); speakers = []; }
+  renderSpeakers();
+}
+function renderSpeakers() {
+  const list = $("spk-list"); list.innerHTML = "";
+  $("spk-count").textContent = speakers.length ? `${speakers.length} 人` : "";
+  if (!speakers.length) {
+    list.innerHTML = `<div style="font-size:12.5px;color:#8a90a0;align-self:center">${running ? "話者がまだ無いで。右のボックスに声をドロップしてな" : "サーバを起動すると話者が出てくるで"}</div>`;
+  }
+  if (!speakers.find(s => s.id === settings.speaker)) settings.speaker = speakers[0]?.id || "";
+  for (const s of speakers) {
+    const card = document.createElement("div");
+    card.className = "spk" + (s.id === settings.speaker ? " active" : "");
+    card.innerHTML = `<div class="avatar" style="background:${colorOf(s.id)}">${s.name.slice(0,1)}</div>
+      <div class="meta"><div class="name">${esc(s.name)}</div><div class="sub">参照クリップ ${s.clips}本${s.created_at ? " ・ " + fmtTime(s.created_at) : ""}</div></div>
+      ${s.protected ? "" : `<button class="btn btn-mini btn-danger del" title="この声を削除">🗑</button>`}`;
+    card.addEventListener("click", e => {
+      if (e.target.classList.contains("del")) return;
+      settings.speaker = s.id; persist(); renderSpeakers();
+    });
+    card.querySelector(".del")?.addEventListener("click", async () => {
+      const yes = await invoke("plugin:dialog|confirm", { message: `「${s.name}」を声のデータベースから削除する？\n参照クリップも消えるで。`, title: "いろとりスタジオ", kind: "warning" });
+      if (!yes) return;
+      try { await api("DELETE", "/speakers/" + encodeURIComponent(s.id)); setStatus(`「${s.name}」を削除したで`, "ok"); await loadSpeakers(); }
+      catch (e) { setStatus("削除失敗: " + e, "err"); }
+    });
+    list.appendChild(card);
+  }
+  const sel = $("speaker"); sel.innerHTML = "";
+  for (const s of speakers) { const o = document.createElement("option"); o.value = s.id; o.textContent = s.name; sel.appendChild(o); }
+  sel.value = settings.speaker;
+}
+$("speaker").addEventListener("change", () => { settings.speaker = $("speaker").value; persist(); renderSpeakers(); });
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ドロップ受付 */
+function isAudio(p) { return AUDIO_EXT.includes((p.split(".").pop() || "").toLowerCase()); }
+function askSpeakerName(path) {
+  if (!running) { setStatus("先にサーバを起動してな（右上のボタン）", "err"); return; }
+  pendingPath = path;
+  $("m-path").textContent = path;
+  $("m-name").value = path.split("/").pop().replace(/\.[^.]+$/, "");
+  $("m-status").textContent = "";
+  $("m-ok").disabled = false; $("m-cancel").disabled = false;
+  $("modal").hidden = false;
+  setTimeout(() => { $("m-name").focus(); $("m-name").select(); }, 50);
+}
+listen("tauri://drag-over", () => $("drop").classList.add("dragover"));
+listen("tauri://drag-leave", () => $("drop").classList.remove("dragover"));
+listen("tauri://drag-drop", e => {
+  $("drop").classList.remove("dragover");
+  const path = (e.payload.paths || []).find(isAudio);
+  if (!path) { setStatus("音声ファイル（m4a / wav / mp3 など）をドロップしてな。", "err"); return; }
+  askSpeakerName(path);
+});
+$("drop").addEventListener("click", async () => {
+  const path = await invoke("plugin:dialog|open", {
+    options: { title: "声の元ファイルを選ぶ", multiple: false, directory: false,
+      filters: [{ name: "音声・動画", extensions: AUDIO_EXT }] },
+  });
+  if (path) askSpeakerName(typeof path === "string" ? path : path.path);
+});
+$("m-cancel").addEventListener("click", () => { $("modal").hidden = true; pendingPath = null; });
+$("m-name").addEventListener("keydown", e => { if (e.key === "Enter") $("m-ok").click(); });
+$("m-ok").addEventListener("click", async () => {
+  const name = $("m-name").value.trim();
+  if (!name) { $("m-status").textContent = "名前を入れてな"; return; }
+  $("m-ok").disabled = true; $("m-cancel").disabled = true;
+  $("m-status").innerHTML = `<span class="spin"></span> 変換して声の特徴を焼き付け中…（10〜30秒）`;
+  try {
+    const res = await api("POST", "/speakers", {
+      name, source_path: pendingPath,
+      clip_seconds: Number($("m-sec").value) || 10, max_clips: Number($("m-n").value) || 3,
+    });
+    $("modal").hidden = true;
+    settings.speaker = res.id; persist();
+    await loadSpeakers();
+    setStatus(`「${name}」を登録したで！（元 ${res.duration}秒 / ${res.sample_rate}Hz → クリップ ${res.clips}本）`, "ok");
+  } catch (e) {
+    $("m-status").textContent = "登録失敗: " + e; $("m-status").className = "err";
+    $("m-ok").disabled = false; $("m-cancel").disabled = false;
+  }
+});
+
+/* ===== 原稿 ===== */
+$("script").addEventListener("input", () => { $("chars").textContent = $("script").value.length; });
+$("expr").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  $("expr").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+  settings.expression = b.dataset.v; persist();
+});
+$("rate").addEventListener("input", () => { $("rate-v").textContent = (Number($("rate").value)/180).toFixed(2) + "x"; settings.rate = Number($("rate").value); persist(); });
+$("outdir-btn").addEventListener("click", async () => {
+  const dir = await invoke("plugin:dialog|open", { options: { title: "保存先フォルダ", directory: true, multiple: false, defaultPath: settings.outputDir } });
+  if (dir) { settings.outputDir = typeof dir === "string" ? dir : dir.path; persist(); $("outdir").textContent = settings.outputDir; loadOutputs(); }
+});
+$("outdir-open").addEventListener("click", () => invoke("reveal", { path: settings.outputDir }));
+
+function synthParams(text) {
+  const p = { speaker: settings.speaker, text, expression: settings.expression, rate: settings.rate };
+  const cap = $("caption").value.trim(); if (cap) p.caption = cap;
+  return p;
+}
+function firstSentence(t) {
+  const m = t.trim().match(/^[\s\S]*?[。！？!?\n]/); return (m ? m[0] : t.trim()).trim().slice(0, 110);
+}
+$("preview-btn").addEventListener("click", async () => {
+  const text = $("script").value.trim();
+  if (!text) { setStatus("原稿を入れてな", "err"); return; }
+  if (!running || !settings.speaker) { setStatus("サーバを起動して声を選んでな", "err"); return; }
+  const s = firstSentence(text);
+  $("preview-btn").disabled = true; setStatus(`試し聞き生成中… 「${s}」`);
+  try {
+    const blob = await api("POST", "/synthesis", { ...synthParams(s), sample_rate: 48000 });
+    const url = URL.createObjectURL(blob);
+    const player = $("player"); player.hidden = false; player.src = url; player.play();
+    setStatus("試し聞きできたで！", "ok");
+  } catch (e) { setStatus("試し聞き失敗: " + e, "err"); }
+  $("preview-btn").disabled = false;
+});
+
+function defaultName() {
+  const d = new Date(); const p = n => String(n).padStart(2, "0");
+  const spk = speakers.find(s => s.id === settings.speaker)?.name || "voice";
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}_${spk.replace(/[\/:]/g, "_")}`;
+}
+$("render-btn").addEventListener("click", async () => {
+  const text = $("script").value.trim();
+  if (!text) { setStatus("原稿を入れてな", "err"); return; }
+  if (!running || !settings.speaker) { setStatus("サーバを起動して声を選んでな", "err"); return; }
+  let name = $("fname").value.trim() || defaultName();
+  name = name.replace(/\.wav$/i, "");
+  const outPath = settings.outputDir.replace(/\/$/, "") + "/" + name + ".wav";
+  $("render-btn").disabled = true; $("preview-btn").disabled = true; $("cancel-btn").hidden = false;
+  $("bar").style.width = "0%"; $("prog").textContent = "";
+  setStatus("レンダー開始…");
+  try {
+    currentJob = await api("POST", "/render", { ...synthParams(text), out_path: outPath, pause_ms: 350 });
+    await pollJob();
+  } catch (e) { setStatus("失敗: " + e, "err"); }
+  currentJob = null;
+  $("render-btn").disabled = false; $("preview-btn").disabled = false; $("cancel-btn").hidden = true;
+});
+$("cancel-btn").addEventListener("click", async () => {
+  if (currentJob) { try { await api("POST", `/jobs/${currentJob.id}/cancel`); } catch (e) { setStatus("中断失敗: " + e, "err"); } }
+});
+async function pollJob() {
+  while (true) {
+    await new Promise(r => setTimeout(r, 1000));
+    const j = await api("GET", "/jobs/" + currentJob.id);
+    const pct = j.total ? Math.round(j.done / j.total * 100) : 0;
+    $("bar").style.width = pct + "%"; $("prog").textContent = `${j.done}/${j.total}`;
+    if (j.status === "running" || j.status === "queued") { setStatus(`生成中… ${j.done}/${j.total} 区切り（1区切り 9秒前後）`); continue; }
+    if (j.status === "done") {
+      setStatus(`保存したで！ ${j.out_path}（${j.seconds}秒）`, "ok");
+      const player = $("player"); player.hidden = false; player.src = convertFileSrc(j.out_path) + "?t=" + Date.now(); player.play();
+      await loadOutputs();
+    } else if (j.status === "cancelled") {
+      setStatus("中断したで（ファイルは保存してへん）");
+    } else {
+      setStatus("生成に失敗: " + j.error, "err");
+    }
+    return;
+  }
+}
+
+/* ===== 出力一覧 ===== */
+async function loadOutputs() {
+  let files = [];
+  try { files = await invoke("list_outputs", { dir: settings.outputDir }); } catch (e) { setStatus("出力一覧が読めへん: " + e, "err"); }
+  const box = $("outs"); box.innerHTML = "";
+  if (!files.length) { box.innerHTML = `<div style="font-size:12px;color:#8a90a0">まだ出力が無いで</div>`; return; }
+  for (const f of files) {
+    const row = document.createElement("div"); row.className = "out";
+    row.innerHTML = `<span>🎵</span><span class="n" title="${esc(f.path)}">${esc(f.name)}</span><span class="m">${fmtSize(f.size)} ・ ${fmtTime(f.modified)}</span>
+      <button class="btn btn-mini" data-a="reveal">Finder</button><button class="btn btn-mini btn-danger" data-a="del">🗑</button>`;
+    row.addEventListener("click", async e => {
+      const a = e.target.dataset.a;
+      if (a === "reveal") { invoke("reveal", { path: f.path }); return; }
+      if (a === "del") {
+        const yes = await invoke("plugin:dialog|confirm", { message: `${f.name} を削除する？`, title: "いろとりスタジオ", kind: "warning" });
+        if (yes) { try { await invoke("delete_file", { path: f.path }); await loadOutputs(); } catch (err) { setStatus(String(err), "err"); } }
+        return;
+      }
+      const player = $("player"); player.hidden = false; player.src = convertFileSrc(f.path) + "?t=" + Date.now(); player.play();
+    });
+    box.appendChild(row);
+  }
+}
+
+/* ===== 設定 ===== */
+let persistTimer = null;
+function persist() {
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => invoke("save_settings", { settings }).catch(e => setStatus("設定保存失敗: " + e, "err")), 300);
+}
+
+/* ===== 起動 ===== */
+(async () => {
+  try {
+    const info = await invoke("repo_info"); serverUrl = info.serverUrl;
+    settings = Object.assign(settings, await invoke("load_settings"));
+    if (!settings.expression) settings.expression = "natural";
+    if (!settings.rate) settings.rate = 180;
+    $("outdir").textContent = settings.outputDir; $("outdir").title = settings.outputDir;
+    $("rate").value = settings.rate; $("rate-v").textContent = (settings.rate/180).toFixed(2) + "x";
+    $("expr").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === settings.expression));
+    if (!info.exists) setStatus(`いろとりTTSが ${info.repoDir} に見つからへん。リポジトリを置いてな`, "err");
+    await loadOutputs();
+    const ok = await refreshServer();
+    if (!ok) setStatus("サーバが起動してへん。右上の「▶ サーバを起動」を押してな。");
+  } catch (e) { setStatus("初期化失敗: " + e, "err"); }
+  setInterval(() => { if (!currentJob) refreshServer().catch(() => {}); }, 15000);
+})();
+</script>
+</body>
+</html>

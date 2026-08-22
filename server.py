@@ -1,13 +1,19 @@
-"""econte など外部アプリから叩くための最小HTTPサーバ。
+"""econte や「いろとりスタジオ」(app/) など外部アプリから叩くための常駐HTTPサーバ。
 
 Gradio を経由せずにモデルを常駐させ、参照音声の latent を起動時に一度だけ焼く。
 これで1リクエストあたりのモデルロード（約6秒）と参照エンコード（約4秒）が消える。
 
 エンドポイント（VOICEVOX ENGINE の作法に寄せてある。econte が同じ形で扱えるように）:
-  GET  /version    -> {"version": "...", "device": "mps", "checkpoint": "..."}
-  GET  /speakers   -> [{"id": "takataka", "name": "たかたか（本人）", "clips": 3}]
-  POST /synthesis  -> リクエストJSONを受けて 22050Hz/モノラル/16bit の WAV バイト列を返す
-                      {speaker, text, expression, rate, take?}  take>0 で別テイク（録り直し）
+  GET  /version          -> {"version": "...", "device": "mps", "checkpoint": "...", "sample_rate": 22050}
+  GET  /speakers         -> [{"id": "takataka", "name": "たかたか（本人）", "clips": 3, ...}]
+  POST /speakers         -> 声の元ファイルから新しい話者を作る {name, source_path, clip_seconds?, max_clips?}
+  DELETE /speakers/<id>  -> 話者を消す（参照wav・latent も消す。takataka は保護）
+  POST /synthesis        -> 22050Hz/モノラル/16bit の WAV バイト列を返す（econte 互換）
+                            {speaker, text, expression, rate, take?, caption?, sample_rate?}
+  POST /render           -> 長文を分割→合成→連結して WAV ファイルに保存するジョブを開始
+                            {speaker, text, expression|caption, rate, num_steps?, out_path, pause_ms?}
+  GET  /jobs/<id>        -> ジョブ進捗 {status, done, total, out_path, seconds, error}
+  POST /jobs/<id>/cancel -> ジョブ中断（チャンク境界で止まる）
 
 合成は 1 件ずつ直列に流す（MPS 上のモデルを複数スレッドで同時に叩かせない）。
 """
@@ -19,12 +25,19 @@ import hashlib
 import io
 import json
 import logging
+import os
+import re
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
+import uuid
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import torch
 import torchaudio
@@ -40,10 +53,17 @@ from irodori_tts.inference_runtime import (
 
 REPO_ROOT = Path(__file__).resolve().parent
 SPEAKERS_JSON = REPO_ROOT / "speakers.json"
-LATENT_DIR = REPO_ROOT / "refs" / ".latents"
+REFS_DIR = REPO_ROOT / "refs"
+LATENT_DIR = REFS_DIR / ".latents"
 
 # econte 側のナレーション連結パイプラインがこの形式しか受け取らない
 OUT_SAMPLE_RATE = 22050
+# いろとりスタジオの保存用（モデル素の 48kHz）
+NATIVE_SAMPLE_RATE = 48000
+ALLOWED_SAMPLE_RATES = {OUT_SAMPLE_RATE, NATIVE_SAMPLE_RATE}
+
+# 消してはいけない話者（本人の声）
+PROTECTED_SPEAKERS = {"takataka"}
 
 # 抑揚3段階。Irodori は数値パラメータではなく日本語のキャプションで演技を指示する。
 # flat はキャプション無し＝素の読みにして、キャプション条件付けの揺れを持ち込まない。
@@ -60,6 +80,9 @@ DEFAULT_SPEAKERS = {
     }
 }
 
+# 長文レンダー: 1チャンクの上限文字数（max_text_len=256トークン / max_seconds=30 の安全圏）
+RENDER_CHUNK_CHARS = 110
+
 log = logging.getLogger("irodori.server")
 
 
@@ -69,6 +92,43 @@ class Speaker:
     name: str
     clips: list[Path]
     latents: list[Path]
+    source: str | None = None
+    created_at: int | None = None
+
+    def to_public(self) -> dict:
+        # 先頭3つは econte が読む形。あとはスタジオ向けの追加情報（足すだけで形は崩さない）
+        return {
+            "id": self.id,
+            "name": self.name,
+            "clips": len(self.clips),
+            "clip_paths": [str(p) for p in self.clips],
+            "source": self.source,
+            "created_at": self.created_at,
+            "protected": self.id in PROTECTED_SPEAKERS,
+        }
+
+
+@dataclass
+class RenderJob:
+    id: str
+    out_path: Path
+    total: int = 0
+    done: int = 0
+    status: str = "queued"  # queued | running | done | error | cancelled
+    error: str = ""
+    seconds: float = 0.0
+    cancel: threading.Event = field(default_factory=threading.Event)
+
+    def to_public(self) -> dict:
+        return {
+            "id": self.id,
+            "status": self.status,
+            "done": self.done,
+            "total": self.total,
+            "out_path": str(self.out_path),
+            "seconds": round(self.seconds, 2),
+            "error": self.error,
+        }
 
 
 def load_speaker_config() -> dict:
@@ -83,6 +143,13 @@ def load_speaker_config() -> dict:
     if not isinstance(raw, dict) or not raw:
         raise SystemExit("speakers.json が空、または辞書ではありません")
     return raw
+
+
+def save_speaker_config(cfg: dict) -> None:
+    """speakers.json を原子的に書き換える（途中で落ちても半端なJSONを残さない）。"""
+    tmp = SPEAKERS_JSON.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, SPEAKERS_JSON)
 
 
 def _clip_fingerprint(clips: list[Path]) -> str:
@@ -105,6 +172,141 @@ def _resolve_checkpoint_path(checkpoint: str) -> str:
     return resolved
 
 
+# ---------------------------------------------------------------------------
+# 声の元ファイル → 参照クリップ（ffmpeg）
+# ---------------------------------------------------------------------------
+
+def _run(cmd: list[str], timeout: float, label: str) -> subprocess.CompletedProcess:
+    """外部CLIは必ずタイムアウト付きで呼ぶ（終わらないプロセスにサーバごと道連れにされないため）。"""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"{label} がタイムアウトしました（{timeout:.0f}秒）") from e
+    except FileNotFoundError as e:
+        raise RuntimeError(f"{label} が見つかりません（{cmd[0]}）。brew install ffmpeg してください") from e
+
+
+def probe_audio(path: Path) -> tuple[float, int]:
+    """ffprobe で (尺[秒], サンプルレート) を返す。"""
+    cp = _run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "a:0",
+            "-show_entries", "stream=sample_rate:format=duration",
+            "-of", "json", str(path),
+        ],
+        timeout=30,
+        label="ffprobe",
+    )
+    if cp.returncode != 0:
+        raise ValueError(f"音声として読めませんでした: {cp.stderr.strip()[:200]}")
+    info = json.loads(cp.stdout or "{}")
+    streams = info.get("streams") or []
+    if not streams:
+        raise ValueError("音声ストリームが入っていません")
+    sr = int(streams[0].get("sample_rate") or 0)
+    duration = float((info.get("format") or {}).get("duration") or 0.0)
+    if sr <= 0 or duration <= 0:
+        raise ValueError("尺かサンプルレートが取れませんでした")
+    return duration, sr
+
+
+def _mean_volume_db(path: Path) -> float:
+    cp = _run(
+        ["ffmpeg", "-hide_banner", "-i", str(path), "-af", "volumedetect", "-f", "null", "-"],
+        timeout=60,
+        label="ffmpeg volumedetect",
+    )
+    m = re.search(r"mean_volume:\s*(-?[\d.]+) dB", cp.stderr)
+    return float(m.group(1)) if m else -99.0
+
+
+def build_reference_clips(
+    spk_id: str, source: Path, clip_seconds: float = 10.0, max_clips: int = 3
+) -> tuple[list[Path], float, int]:
+    """声の元ファイルから refs/<id>_full.wav と refs/<id>_a.wav… を作る。
+
+    CONTEXT.md の知見どおり「10秒 × 最大3本」。元のサンプルレートは維持する
+    （コーデックが内部で1回だけリサンプルするので、こちらで落とすと二重変換になる）。
+    48kHz 超だけは 48kHz に落とす。
+    """
+    duration, src_sr = probe_audio(source)
+    REFS_DIR.mkdir(parents=True, exist_ok=True)
+    out_sr = min(src_sr, NATIVE_SAMPLE_RATE)
+
+    full = REFS_DIR / f"{spk_id}_full.wav"
+    cp = _run(
+        ["ffmpeg", "-hide_banner", "-y", "-i", str(source), "-vn", "-ac", "1",
+         "-ar", str(out_sr), "-c:a", "pcm_s24le", str(full)],
+        timeout=600,
+        label="ffmpeg 変換",
+    )
+    if cp.returncode != 0 or not full.exists():
+        raise ValueError(f"wav への変換に失敗しました: {cp.stderr.strip()[-300:]}")
+
+    clips: list[Path] = []
+    if duration <= clip_seconds + 1.0:
+        # 短い素材は丸ごと1本
+        clip = REFS_DIR / f"{spk_id}_a.wav"
+        shutil.copyfile(full, clip)
+        clips.append(clip)
+        return clips, duration, out_sr
+
+    n = max(1, min(max_clips, int(duration // clip_seconds)))
+    # 先頭1秒と末尾は避けて均等配置（先頭はノイズ・無音が多い）
+    usable = duration - clip_seconds - 1.0
+    for i in range(n):
+        offset = 1.0 + (usable * i / max(1, n - 1) if n > 1 else usable / 2)
+        clip = REFS_DIR / f"{spk_id}_{chr(ord('a') + i)}.wav"
+        for attempt in range(3):
+            cp = _run(
+                ["ffmpeg", "-hide_banner", "-y", "-ss", f"{offset:.2f}", "-t", f"{clip_seconds:.2f}",
+                 "-i", str(full), "-c:a", "pcm_s24le", str(clip)],
+                timeout=120,
+                label="ffmpeg 切り出し",
+            )
+            if cp.returncode != 0 or not clip.exists():
+                raise ValueError(f"クリップの切り出しに失敗しました: {cp.stderr.strip()[-300:]}")
+            vol = _mean_volume_db(clip)
+            if vol >= -45.0:
+                break
+            # ほぼ無音のクリップは5秒ずらして取り直す
+            log.info("クリップ %s は無音気味（%.1f dB）。5秒ずらします", clip.name, vol)
+            offset = min(offset + 5.0, duration - clip_seconds)
+        clips.append(clip)
+    return clips, duration, out_sr
+
+
+# ---------------------------------------------------------------------------
+# 長文の分割
+# ---------------------------------------------------------------------------
+
+def split_script(text: str, max_chars: int = RENDER_CHUNK_CHARS) -> list[str]:
+    """原稿を文単位で切って、max_chars を超えない範囲でまとめる。空行は段落の切れ目として尊重。"""
+    chunks: list[str] = []
+    for para in re.split(r"\n\s*\n", text.strip()):
+        para = para.strip()
+        if not para:
+            continue
+        sentences = [s.strip() for s in re.split(r"(?<=[。！？!?\n])", para) if s.strip()]
+        buf = ""
+        for s in sentences:
+            # 1文が長すぎるときは読点でさらに割る
+            parts = [s] if len(s) <= max_chars else [
+                p for p in re.split(r"(?<=[、,])", s) if p.strip()
+            ]
+            for p in parts:
+                if buf and len(buf) + len(p) > max_chars:
+                    chunks.append(buf)
+                    buf = ""
+                buf += p
+                if len(buf) > max_chars:  # 読点もない超長文はそのまま1チャンク
+                    chunks.append(buf)
+                    buf = ""
+        if buf:
+            chunks.append(buf)
+    return chunks
+
+
 class SynthServer:
     def __init__(self, checkpoint: str, device: str, num_steps: int, codec_repo: str | None):
         self.checkpoint = checkpoint
@@ -118,68 +320,159 @@ class SynthServer:
         if codec_repo:
             key_args["codec_repo"] = codec_repo
         self.runtime, _ = get_cached_runtime(RuntimeKey(**key_args))
-        self.lock = threading.Lock()
+        self.lock = threading.Lock()  # モデル（MPS）を触るときは必ずこれを取る
+        self.cfg_lock = threading.Lock()  # speakers.json と self.speakers の書き換え
         self.speakers: dict[str, Speaker] = {}
+        self.jobs: dict[str, RenderJob] = {}
+        self.jobs_lock = threading.Lock()
         self._prepare_speakers()
 
-    def _prepare_speakers(self) -> None:
-        """参照wavを latent に焼いて保存する。既に同じ指紋の latent があれば再利用。"""
-        LATENT_DIR.mkdir(parents=True, exist_ok=True)
-        for spk_id, cfg in load_speaker_config().items():
-            clips = [(REPO_ROOT / c).resolve() for c in cfg.get("clips", [])]
-            missing = [str(c) for c in clips if not c.exists()]
-            if not clips or missing:
-                log.warning("話者 %s をとばします（参照音声が無い: %s）", spk_id, missing or "未指定")
-                continue
-            fp = _clip_fingerprint(clips)
-            latents: list[Path] = []
-            for i, clip in enumerate(clips):
-                out = LATENT_DIR / f"{spk_id}_{fp}_{i}.pt"
-                if not out.exists():
-                    t0 = time.perf_counter()
-                    wav, sr = _load_audio(clip)
+    # ---------------- 話者 ----------------
+
+    def _prepare_one(self, spk_id: str, cfg: dict) -> Speaker | None:
+        """1話者ぶんの参照wavを latent に焼く。既に同じ指紋の latent があれば再利用。"""
+        clips = [(REPO_ROOT / c).resolve() for c in cfg.get("clips", [])]
+        missing = [str(c) for c in clips if not c.exists()]
+        if not clips or missing:
+            log.warning("話者 %s をとばします（参照音声が無い: %s）", spk_id, missing or "未指定")
+            return None
+        fp = _clip_fingerprint(clips)
+        latents: list[Path] = []
+        for i, clip in enumerate(clips):
+            out = LATENT_DIR / f"{spk_id}_{fp}_{i}.pt"
+            if not out.exists():
+                t0 = time.perf_counter()
+                wav, sr = _load_audio(clip)
+                with self.lock:
                     piece = self.runtime.codec.encode_waveform(
                         wav.unsqueeze(0),
                         sample_rate=int(sr),
                         normalize_db=-16.0,
                         ensure_max=True,
                     ).cpu()
-                    if piece.shape[1] == 0:
-                        raise SystemExit(f"参照音声が空の latent になりました: {clip}")
-                    # 読み出し側は (T, D) の2次元を想定している
-                    torch.save(piece.squeeze(0).contiguous(), out)
-                    log.info(
-                        "latent を作成: %s (%.2fs, %d steps)",
-                        out.name,
-                        time.perf_counter() - t0,
-                        piece.shape[1],
-                    )
-                latents.append(out)
-            self.speakers[spk_id] = Speaker(
-                id=spk_id,
-                name=cfg.get("name", spk_id),
-                clips=clips,
-                latents=latents,
-            )
+                if piece.shape[1] == 0:
+                    raise ValueError(f"参照音声が空の latent になりました: {clip}")
+                # 読み出し側は (T, D) の2次元を想定している
+                torch.save(piece.squeeze(0).contiguous(), out)
+                log.info(
+                    "latent を作成: %s (%.2fs, %d steps)",
+                    out.name,
+                    time.perf_counter() - t0,
+                    piece.shape[1],
+                )
+            latents.append(out)
+        return Speaker(
+            id=spk_id,
+            name=cfg.get("name", spk_id),
+            clips=clips,
+            latents=latents,
+            source=cfg.get("source"),
+            created_at=cfg.get("created_at"),
+        )
+
+    def _prepare_speakers(self) -> None:
+        LATENT_DIR.mkdir(parents=True, exist_ok=True)
+        for spk_id, cfg in load_speaker_config().items():
+            try:
+                spk = self._prepare_one(spk_id, cfg)
+            except ValueError as e:
+                raise SystemExit(str(e)) from e
+            if spk:
+                self.speakers[spk_id] = spk
         if not self.speakers:
             raise SystemExit(
                 "使える話者がひとつもありません。refs/ に参照音声を置くか speakers.json を直してください"
             )
         log.info("話者: %s", ", ".join(f"{s.id}({len(s.clips)}本)" for s in self.speakers.values()))
 
-    def synthesize(self, params: dict) -> bytes:
-        text = str(params.get("text", "")).strip()
-        if not text:
-            raise ValueError("text が空です")
+    def add_speaker(self, params: dict) -> dict:
+        name = str(params.get("name", "")).strip()
+        src_raw = str(params.get("source_path", "")).strip()
+        if not name:
+            raise ValueError("name（表示名）が空です")
+        if not src_raw:
+            raise ValueError("source_path（声の元ファイル）が空です")
+        source = Path(os.path.expanduser(src_raw)).resolve()
+        if not source.is_file():
+            raise ValueError(f"声の元ファイルが見つかりません: {source}")
+        clip_seconds = float(params.get("clip_seconds", 10.0) or 10.0)
+        max_clips = int(params.get("max_clips", 3) or 3)
+        if not (3.0 <= clip_seconds <= 30.0):
+            raise ValueError("clip_seconds は 3〜30 秒にしてください")
+        if not (1 <= max_clips <= 6):
+            raise ValueError("max_clips は 1〜6 にしてください")
+
+        spk_id = f"spk_{int(time.time())}"
+        with self.cfg_lock:
+            cfg_all = dict(load_speaker_config())
+            while spk_id in cfg_all or spk_id in self.speakers:
+                spk_id = f"spk_{int(time.time() * 1000)}"
+            t0 = time.perf_counter()
+            clips, duration, sr = build_reference_clips(spk_id, source, clip_seconds, max_clips)
+            log.info("参照クリップ %d本を作成（元 %.1f秒 / %dHz, %.1fs）", len(clips), duration, sr,
+                     time.perf_counter() - t0)
+            cfg = {
+                "name": name,
+                "clips": [str(c.relative_to(REPO_ROOT)) for c in clips],
+                "source": str(source),
+                "created_at": int(time.time()),
+            }
+            try:
+                spk = self._prepare_one(spk_id, cfg)
+            except Exception:
+                # 焼けなかった話者のゴミを残さない
+                self._remove_speaker_files(spk_id)
+                raise
+            if spk is None:
+                self._remove_speaker_files(spk_id)
+                raise ValueError("参照クリップが作れませんでした")
+            cfg_all[spk_id] = cfg
+            save_speaker_config(cfg_all)
+            self.speakers[spk_id] = spk
+        pub = spk.to_public()
+        pub.update({"duration": round(duration, 1), "sample_rate": sr})
+        log.info("話者を追加: %s (%s)", spk_id, name)
+        return pub
+
+    def _remove_speaker_files(self, spk_id: str) -> None:
+        """refs/<id>_*.wav と latent を消す。refs 配下の絶対パスだけを対象にする。"""
+        for p in list(REFS_DIR.glob(f"{spk_id}_*.wav")) + list(LATENT_DIR.glob(f"{spk_id}_*.pt")):
+            p = p.resolve()
+            if REFS_DIR.resolve() in p.parents and p.is_file():
+                p.unlink()
+                log.info("削除: %s", p)
+
+    def delete_speaker(self, spk_id: str) -> dict:
+        if spk_id in PROTECTED_SPEAKERS:
+            raise ValueError(f"{spk_id} は保護されている話者なので消せません")
+        with self.cfg_lock:
+            cfg_all = dict(load_speaker_config())
+            if spk_id not in cfg_all and spk_id not in self.speakers:
+                raise ValueError(f"知らない話者です: {spk_id}")
+            if len([s for s in self.speakers if s != spk_id]) == 0:
+                raise ValueError("最後の1話者は消せません")
+            cfg_all.pop(spk_id, None)
+            save_speaker_config(cfg_all)
+            self.speakers.pop(spk_id, None)
+            self._remove_speaker_files(spk_id)
+        log.info("話者を削除: %s", spk_id)
+        return {"deleted": spk_id}
+
+    # ---------------- 合成 ----------------
+
+    def _build_request(self, params: dict, text: str) -> tuple[SamplingRequest, Speaker]:
         spk_id = str(params.get("speaker") or next(iter(self.speakers)))
         speaker = self.speakers.get(spk_id)
         if speaker is None:
             raise ValueError(f"知らない話者です: {spk_id}（使えるのは {list(self.speakers)}）")
 
+        # caption（自由文）が来ていればそれを優先。無ければ expression 3段階。
+        caption = str(params.get("caption") or "").strip() or None
         expression = str(params.get("expression", "flat"))
-        if expression not in EXPRESSION_CAPTIONS:
-            raise ValueError(f"知らない抑揚です: {expression}")
-        caption = EXPRESSION_CAPTIONS[expression]
+        if caption is None:
+            if expression not in EXPRESSION_CAPTIONS:
+                raise ValueError(f"知らない抑揚です: {expression}")
+            caption = EXPRESSION_CAPTIONS[expression]
 
         # 呼び出し側は say の rate(=180が等速) で速さを持っている。
         # duration_scale は「尺の倍率」なので、速くしたい = 尺を縮める = 180/rate。
@@ -192,7 +485,7 @@ class SynthServer:
         # キャッシュを消して作り直したときに音が変わるとつなぎ目で違和感が出る）。
         # ただし呼び出し側が「録り直し」を明示したとき（take>0）は別のテイクを返す。
         take = int(params.get("take", 0) or 0)
-        seed_src = f"{spk_id}|{expression}|{rate}|{num_steps}|{text}|{take}"
+        seed_src = f"{spk_id}|{expression}|{caption or ''}|{rate}|{num_steps}|{text}|{take}"
         seed = int(hashlib.sha256(seed_src.encode("utf-8")).hexdigest()[:15], 16)
 
         req = SamplingRequest(
@@ -203,50 +496,145 @@ class SynthServer:
             num_steps=num_steps,
             seed=seed,
         )
+        return req, speaker
+
+    def _synth_tensor(self, params: dict, text: str) -> tuple[torch.Tensor, int, Speaker]:
+        req, speaker = self._build_request(params, text)
         with self.lock:  # モデルは1本しかないので同時実行させない
             t0 = time.perf_counter()
             result = self.runtime.synthesize(req)
             elapsed = time.perf_counter() - t0
-
-        wav_bytes = to_wav_bytes(result.audio, result.sample_rate)
         log.info(
-            "合成 %.2fs speaker=%s expr=%s steps=%d chars=%d -> %.2fs音声",
-            elapsed,
-            spk_id,
-            expression,
-            num_steps,
-            len(text),
-            len(wav_bytes) / (OUT_SAMPLE_RATE * 2),
+            "合成 %.2fs speaker=%s steps=%d chars=%d",
+            elapsed, speaker.id, req.num_steps, len(text),
         )
-        return wav_bytes
+        return result.audio, int(result.sample_rate), speaker
+
+    def synthesize(self, params: dict) -> bytes:
+        text = str(params.get("text", "")).strip()
+        if not text:
+            raise ValueError("text が空です")
+        out_sr = int(params.get("sample_rate", OUT_SAMPLE_RATE) or OUT_SAMPLE_RATE)
+        if out_sr not in ALLOWED_SAMPLE_RATES:
+            raise ValueError(f"sample_rate は {sorted(ALLOWED_SAMPLE_RATES)} のどれかにしてください")
+        audio, sr, _ = self._synth_tensor(params, text)
+        return to_wav_bytes(audio, sr, out_sr)
+
+    # ---------------- 長文レンダー（ジョブ） ----------------
+
+    def start_render(self, params: dict) -> RenderJob:
+        text = str(params.get("text", "")).strip()
+        if not text:
+            raise ValueError("text が空です")
+        out_raw = str(params.get("out_path", "")).strip()
+        if not out_raw:
+            raise ValueError("out_path（保存先）が空です")
+        out_path = Path(os.path.expanduser(out_raw)).resolve()
+        if out_path.suffix.lower() != ".wav":
+            out_path = out_path.with_suffix(".wav")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        # 話者・抑揚の妥当性はここで先に確かめる（ジョブ開始後に失敗すると気づきにくい）
+        self._build_request(params, "テスト")
+        chunks = split_script(text)
+        if not chunks:
+            raise ValueError("読み上げる文が見つかりません")
+        pause_ms = int(params.get("pause_ms", 350) or 0)
+        pause_ms = max(0, min(3000, pause_ms))
+
+        job = RenderJob(id=uuid.uuid4().hex[:12], out_path=out_path, total=len(chunks))
+        with self.jobs_lock:
+            self.jobs[job.id] = job
+            # 終わったジョブは50件まで残す
+            for old in [j for j in self.jobs.values() if j.status in {"done", "error", "cancelled"}][:-50]:
+                self.jobs.pop(old.id, None)
+        threading.Thread(
+            target=self._run_render, args=(job, chunks, dict(params), pause_ms),
+            name=f"render-{job.id}", daemon=True,
+        ).start()
+        log.info("レンダー開始 job=%s chunks=%d -> %s", job.id, len(chunks), out_path)
+        return job
+
+    def _run_render(self, job: RenderJob, chunks: list[str], params: dict, pause_ms: int) -> None:
+        job.status = "running"
+        pieces: list[torch.Tensor] = []
+        try:
+            for i, chunk in enumerate(chunks):
+                if job.cancel.is_set():
+                    job.status = "cancelled"
+                    log.info("レンダー中断 job=%s (%d/%d)", job.id, job.done, job.total)
+                    return
+                audio, sr, _ = self._synth_tensor(params, chunk)
+                wav = audio.detach().to("cpu", dtype=torch.float32)
+                if wav.ndim == 1:
+                    wav = wav.unsqueeze(0)
+                if wav.shape[0] > 1:
+                    wav = wav.mean(dim=0, keepdim=True)
+                if sr != NATIVE_SAMPLE_RATE:
+                    wav = torchaudio.functional.resample(wav, sr, NATIVE_SAMPLE_RATE)
+                pieces.append(wav)
+                if pause_ms > 0 and i < len(chunks) - 1:
+                    pieces.append(torch.zeros(1, int(NATIVE_SAMPLE_RATE * pause_ms / 1000)))
+                job.done = i + 1
+            full = torch.cat(pieces, dim=1)
+            write_wav_file(job.out_path, full, NATIVE_SAMPLE_RATE)
+            job.seconds = full.shape[1] / NATIVE_SAMPLE_RATE
+            job.status = "done"
+            log.info("レンダー完了 job=%s %.1f秒 -> %s", job.id, job.seconds, job.out_path)
+        except Exception as e:  # 理由をジョブに残す（握りつぶさない）
+            log.exception("レンダー失敗 job=%s", job.id)
+            job.status = "error"
+            job.error = f"{type(e).__name__}: {e}"
+
+    def get_job(self, job_id: str) -> RenderJob:
+        with self.jobs_lock:
+            job = self.jobs.get(job_id)
+        if job is None:
+            raise ValueError(f"知らないジョブです: {job_id}")
+        return job
 
 
-def to_wav_bytes(audio: torch.Tensor, sample_rate: int) -> bytes:
-    """生成音を 22050Hz・モノラル・16bit の WAV バイト列にする。"""
+def _to_pcm16(audio: torch.Tensor, sample_rate: int, out_sr: int) -> bytes:
     wav = audio.detach().to("cpu", dtype=torch.float32)
     if wav.ndim == 1:
         wav = wav.unsqueeze(0)
     if wav.shape[0] > 1:  # 念のため（v4-Smallはモノラルを返す）
         wav = wav.mean(dim=0, keepdim=True)
-    if sample_rate != OUT_SAMPLE_RATE:
-        wav = torchaudio.functional.resample(wav, sample_rate, OUT_SAMPLE_RATE)
+    if sample_rate != out_sr:
+        wav = torchaudio.functional.resample(wav, sample_rate, out_sr)
     # リサンプル後に 1.0 を超えると int16 で折り返してバリッと歪むので、超えた分だけ縮める
     peak = float(wav.abs().max())
     if peak > 1.0:
         wav = wav / peak
-    pcm = (wav.clamp(-1.0, 1.0) * 32767.0).round().to(torch.int16).numpy().tobytes()
+    return (wav.clamp(-1.0, 1.0) * 32767.0).round().to(torch.int16).numpy().tobytes()
 
+
+def to_wav_bytes(audio: torch.Tensor, sample_rate: int, out_sr: int = OUT_SAMPLE_RATE) -> bytes:
+    """生成音を out_sr・モノラル・16bit の WAV バイト列にする。"""
+    pcm = _to_pcm16(audio, sample_rate, out_sr)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
-        w.setframerate(OUT_SAMPLE_RATE)
+        w.setframerate(out_sr)
         w.writeframes(pcm)
     return buf.getvalue()
 
 
+def write_wav_file(path: Path, audio: torch.Tensor, sample_rate: int) -> None:
+    """一時ファイルに書いてから置き換える（再生側が書きかけを掴まないように）。"""
+    pcm = _to_pcm16(audio, sample_rate, sample_rate)
+    fd, tmp = tempfile.mkstemp(prefix=".irodori_", suffix=".wav", dir=str(path.parent))
+    os.close(fd)
+    with wave.open(tmp, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes(pcm)
+    os.replace(tmp, path)
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "IrodoriTTS/0.1"
+    server_version = "IrodoriTTS/0.2"
     synth: SynthServer  # ServerRunner が差し込む
 
     def log_message(self, fmt, *args):  # 既定の stderr 直書きを logging に寄せる
@@ -256,70 +644,140 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler の規約)
-        if self.path.split("?")[0] == "/version":
-            self._send_json(
-                200,
-                {
-                    "version": "0.1.0",
-                    "engine": "irodori-tts",
-                    "device": self.synth.device,
-                    "checkpoint": self.synth.checkpoint,
-                    "sample_rate": OUT_SAMPLE_RATE,
-                },
-            )
-            return
-        if self.path.split("?")[0] == "/speakers":
-            self._send_json(
-                200,
-                [
-                    {"id": s.id, "name": s.name, "clips": len(s.clips)}
-                    for s in self.synth.speakers.values()
-                ],
-            )
-            return
-        self._send_json(404, {"error": f"知らないパスです: {self.path}"})
-
-    def do_POST(self):  # noqa: N802
-        if self.path.split("?")[0] != "/synthesis":
-            self._send_json(404, {"error": f"知らないパスです: {self.path}"})
-            return
+    def _read_json(self) -> dict | None:
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             self._send_json(400, {"error": "Content-Length が読めません"})
-            return
+            return None
         if length <= 0:
             self._send_json(400, {"error": "リクエストボディが空です"})
-            return
+            return None
         try:
             params = json.loads(self.rfile.read(length).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as e:
             self._send_json(400, {"error": f"リクエストJSONが読めません: {e}"})
-            return
+            return None
         if not isinstance(params, dict):
             self._send_json(400, {"error": "リクエストJSONは辞書で送ってください"})
-            return
+            return None
+        return params
 
-        try:
-            wav_bytes = self.synth.synthesize(params)
-        except ValueError as e:
-            self._send_json(400, {"error": str(e)})
-            return
-        except Exception as e:  # 落とさずに理由を返す。サーバが死ぬと呼び出し側が全部止まる
-            log.exception("合成に失敗")
-            self._send_json(500, {"error": f"合成に失敗しました: {e}"})
-            return
+    def _path(self) -> str:
+        return unquote(urlparse(self.path).path)
 
-        self.send_response(200)
-        self.send_header("Content-Type", "audio/wav")
-        self.send_header("Content-Length", str(len(wav_bytes)))
+    def do_OPTIONS(self):  # noqa: N802  Tauri の webview から fetch するための CORS 前飛行
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
-        self.wfile.write(wav_bytes)
+
+    def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler の規約)
+        path = self._path()
+        if path == "/version":
+            self._send_json(
+                200,
+                {
+                    "version": "0.2.0",
+                    "engine": "irodori-tts",
+                    "device": self.synth.device,
+                    "checkpoint": self.synth.checkpoint,
+                    "sample_rate": OUT_SAMPLE_RATE,
+                    "native_sample_rate": NATIVE_SAMPLE_RATE,
+                    "expressions": list(EXPRESSION_CAPTIONS),
+                },
+            )
+            return
+        if path == "/speakers":
+            self._send_json(200, [s.to_public() for s in self.synth.speakers.values()])
+            return
+        if path.startswith("/jobs/"):
+            try:
+                self._send_json(200, self.synth.get_job(path[len("/jobs/"):]).to_public())
+            except ValueError as e:
+                self._send_json(404, {"error": str(e)})
+            return
+        self._send_json(404, {"error": f"知らないパスです: {path}"})
+
+    def do_DELETE(self):  # noqa: N802
+        path = self._path()
+        if path.startswith("/speakers/"):
+            try:
+                self._send_json(200, self.synth.delete_speaker(path[len("/speakers/"):]))
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+            except Exception as e:
+                log.exception("話者の削除に失敗")
+                self._send_json(500, {"error": f"話者の削除に失敗しました: {e}"})
+            return
+        self._send_json(404, {"error": f"知らないパスです: {path}"})
+
+    def do_POST(self):  # noqa: N802
+        path = self._path()
+        if path == "/synthesis":
+            params = self._read_json()
+            if params is None:
+                return
+            try:
+                wav_bytes = self.synth.synthesize(params)
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+                return
+            except Exception as e:  # 落とさずに理由を返す。サーバが死ぬと呼び出し側が全部止まる
+                log.exception("合成に失敗")
+                self._send_json(500, {"error": f"合成に失敗しました: {e}"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(wav_bytes)))
+            self.end_headers()
+            self.wfile.write(wav_bytes)
+            return
+
+        if path == "/speakers":
+            params = self._read_json()
+            if params is None:
+                return
+            try:
+                self._send_json(200, self.synth.add_speaker(params))
+            except (ValueError, RuntimeError) as e:
+                self._send_json(400, {"error": str(e)})
+            except Exception as e:
+                log.exception("話者の追加に失敗")
+                self._send_json(500, {"error": f"話者の追加に失敗しました: {e}"})
+            return
+
+        if path == "/render":
+            params = self._read_json()
+            if params is None:
+                return
+            try:
+                self._send_json(200, self.synth.start_render(params).to_public())
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+            except Exception as e:
+                log.exception("レンダー開始に失敗")
+                self._send_json(500, {"error": f"レンダー開始に失敗しました: {e}"})
+            return
+
+        m = re.fullmatch(r"/jobs/([0-9a-f]+)/cancel", path)
+        if m:
+            try:
+                job = self.synth.get_job(m.group(1))
+                job.cancel.set()
+                self._send_json(200, job.to_public())
+            except ValueError as e:
+                self._send_json(404, {"error": str(e)})
+            return
+
+        self._send_json(404, {"error": f"知らないパスです: {path}"})
 
 
 def main() -> None:
