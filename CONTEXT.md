@@ -6,7 +6,9 @@ Aratako 氏の日本語特化ローカル TTS。Flow Matching ベース、絵文
 本家: https://github.com/Aratako/Irodori-TTS
 
 ## この Mac での構成
-- 置き場所: `~/git/Irodori-TTS`（本家の shallow clone）
+- 置き場所: `~/git/Irodori-TTS`。remote は **origin = dezigozi/Irodori-TTS（自分のfork）／upstream = Aratako/Irodori-TTS（本家）**。
+  本家の更新を取り込むときは `git fetch upstream && git merge upstream/main`
+- `refs/`（本人の声）と `outputs/` は `.gitignore` で除外。**fork は public なので絶対に声を commit しない**
 - 環境: `uv sync --extra cpu`（macOS では通常の PyPI PyTorch wheel が入り MPS が使える）
 - デバイス: `mps` が自動で既定になる。精度は MPS/CPU では fp32 のみ（bf16 は CUDA/XPU 専用）
 - モデル: `Aratako/Irodori-TTS-v4.1-Small`（HF キャッシュ `~/.cache/huggingface`、約 7.7GB）
