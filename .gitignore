@@ -223,3 +223,6 @@ data/
 # たかたか本人の声（個人データ・公開禁止）と焼いたlatent
 refs/
 outputs/
+# 声のデータベースの中身（ローカル資産。名前・caption・seed が入る）。
+# 無ければ server.py の DEFAULT_SPEAKERS が使われる
+speakers.json
