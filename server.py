@@ -80,6 +80,17 @@ DEFAULT_SPEAKERS = {
     }
 }
 
+# 声デザイン（VoiceDesign）: 参照音声を使わず caption だけで声を作るときに読ませる文。
+# 試し聞きは短く、参照クリップ用は「10秒 × 2〜3本」に切れる長さで、いろんな音素が出るようにする。
+DESIGN_PREVIEW_TEXT = "こんにちは。この声で原稿を読み上げます。よろしくお願いします。"
+DESIGN_REF_TEXT = (
+    "こんにちは。今日はいい天気ですね。わたしはこの声で、原稿を読み上げます。"
+    "数字は、一、二、三、四、五。ゆっくり、はっきりと、落ち着いて話しています。"
+    "どうぞ、よろしくお願いします。"
+)
+# モデルの上限が30秒。参照用は長めに出したいので目一杯まで許す
+DESIGN_MAX_SECONDS = 30.0
+
 # 長文レンダー: 1チャンクの上限文字数（max_text_len=256トークン / max_seconds=30 の安全圏）
 RENDER_CHUNK_CHARS = 110
 
@@ -94,6 +105,9 @@ class Speaker:
     latents: list[Path]
     source: str | None = None
     created_at: int | None = None
+    # 声デザインで作った話者だけ入る。同じ声をもう一度作り直すための種
+    caption: str | None = None
+    seed: int | None = None
 
     def to_public(self) -> dict:
         # 先頭3つは econte が読む形。あとはスタジオ向けの追加情報（足すだけで形は崩さない）
@@ -105,6 +119,10 @@ class Speaker:
             "source": self.source,
             "created_at": self.created_at,
             "protected": self.id in PROTECTED_SPEAKERS,
+            "designed": self.caption is not None,
+            "caption": self.caption,
+            # JS の Number では 2^53 を超えると精度が落ちるので必ず文字列で返す
+            "seed": None if self.seed is None else str(self.seed),
         }
 
 
@@ -118,6 +136,9 @@ class RenderJob:
     error: str = ""
     seconds: float = 0.0
     cancel: threading.Event = field(default_factory=threading.Event)
+    # 声デザイン登録ジョブが、できあがった話者を返すのに使う
+    result: dict | None = None
+    label: str = "render"
 
     def to_public(self) -> dict:
         return {
@@ -128,6 +149,8 @@ class RenderJob:
             "out_path": str(self.out_path),
             "seconds": round(self.seconds, 2),
             "error": self.error,
+            "label": self.label,
+            "result": self.result,
         }
 
 
@@ -368,6 +391,8 @@ class SynthServer:
             latents=latents,
             source=cfg.get("source"),
             created_at=cfg.get("created_at"),
+            caption=cfg.get("caption"),
+            seed=cfg.get("seed"),
         )
 
     def _prepare_speakers(self) -> None:
@@ -497,6 +522,174 @@ class SynthServer:
             seed=seed,
         )
         return req, speaker
+
+    # ---------------- 声デザイン（参照音声なし） ----------------
+    # 実在の人の声を1本も使わずに、caption（どんな声かの説明文）だけで声を作る。
+    # 同じ caption でも seed が変われば別人になるので、試し聞き→気に入った seed を登録、という流れ。
+
+    def _build_design_request(self, params: dict, text: str) -> tuple[SamplingRequest, int]:
+        caption = str(params.get("caption") or "").strip()
+        if not caption:
+            raise ValueError("caption（どんな声にしたいかの説明）が空です")
+        if not self.runtime.model_cfg.use_caption_condition:
+            raise ValueError(
+                "このチェックポイントは caption 条件づけに対応していないので声デザインは使えません"
+            )
+
+        rate = float(params.get("rate", 180.0))
+        duration_scale = 1.0 if rate <= 0 else max(0.6, min(1.8, 180.0 / rate))
+        num_steps = int(params.get("num_steps", self.num_steps))
+
+        raw_seed = params.get("seed")
+        if raw_seed is None or raw_seed == "":
+            # 指定が無ければ毎回ちがう声（＝ガチャ）。使った種は必ず呼び出し側に返す
+            seed = int.from_bytes(os.urandom(8), "big") >> 1
+        else:
+            try:
+                seed = int(raw_seed)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"seed が数字ではありません: {raw_seed!r}") from e
+
+        req = SamplingRequest(
+            text=text,
+            caption=caption,
+            no_ref=True,
+            duration_scale=duration_scale,
+            num_steps=num_steps,
+            max_seconds=DESIGN_MAX_SECONDS,
+            # 参照音声が無いので話者ガイダンスは効かせない（本家の VoiceDesign UI と同じ扱い）
+            cfg_scale_speaker=0.0,
+            seed=seed,
+        )
+        return req, seed
+
+    def _synth_design(self, params: dict, text: str) -> tuple[torch.Tensor, int, int]:
+        req, seed = self._build_design_request(params, text)
+        with self.lock:  # モデルは1本しかないので同時実行させない
+            t0 = time.perf_counter()
+            result = self.runtime.synthesize(req)
+            elapsed = time.perf_counter() - t0
+        log.info("声デザイン合成 %.2fs seed=%d steps=%d chars=%d",
+                 elapsed, seed, req.num_steps, len(text))
+        return result.audio, int(result.sample_rate), seed
+
+    def design_preview(self, params: dict) -> tuple[bytes, int]:
+        """試し聞き。使った seed を返すので、気に入ったらそれを登録に渡す。"""
+        text = str(params.get("text") or "").strip() or DESIGN_PREVIEW_TEXT
+        out_sr = int(params.get("sample_rate", NATIVE_SAMPLE_RATE) or NATIVE_SAMPLE_RATE)
+        if out_sr not in ALLOWED_SAMPLE_RATES:
+            raise ValueError(f"sample_rate は {sorted(ALLOWED_SAMPLE_RATES)} のどれかにしてください")
+        audio, sr, seed = self._synth_design(params, text)
+        return to_wav_bytes(audio, sr, out_sr), seed
+
+    def start_design_speaker(self, params: dict) -> RenderJob:
+        """デザインした声を、参照クリップを持つ普通の話者として登録するジョブを始める。
+
+        参照クリップは「1回の生成を切り分けて」作る。文ごとに作り直すと声が揺れるので、
+        1本の長い音声から切り出して声の同一性を担保する。
+        """
+        name = str(params.get("name", "")).strip()
+        if not name:
+            raise ValueError("name（表示名）が空です")
+        if params.get("seed") is None or params.get("seed") == "":
+            raise ValueError("seed が空です。先に試し聞きして、気に入った声の seed を渡してください")
+        # caption・seed の妥当性はジョブを始める前に見る（開始後に落ちると気づきにくい）
+        self._build_design_request(params, "テスト")
+
+        with self.cfg_lock:
+            cfg_all = load_speaker_config()
+            spk_id = f"vox_{int(time.time())}"
+            while spk_id in cfg_all or spk_id in self.speakers:
+                spk_id = f"vox_{int(time.time() * 1000)}"
+
+        job = RenderJob(
+            id=uuid.uuid4().hex[:12],
+            out_path=REFS_DIR / f"{spk_id}_full.wav",
+            total=2,
+            label="design",
+        )
+        with self.jobs_lock:
+            self.jobs[job.id] = job
+            for old in [j for j in self.jobs.values() if j.status in {"done", "error", "cancelled"}][:-50]:
+                self.jobs.pop(old.id, None)
+        threading.Thread(
+            target=self._run_design_speaker, args=(job, spk_id, name, dict(params)),
+            name=f"design-{job.id}", daemon=True,
+        ).start()
+        log.info("声デザイン登録を開始 job=%s id=%s name=%s", job.id, spk_id, name)
+        return job
+
+    def _run_design_speaker(self, job: RenderJob, spk_id: str, name: str, params: dict) -> None:
+        job.status = "running"
+        tmpdir: Path | None = None
+        try:
+            ref_text = str(params.get("ref_text") or "").strip() or DESIGN_REF_TEXT
+            audio, sr, seed = self._synth_design(params, ref_text)
+            job.done = 1
+            if job.cancel.is_set():
+                job.status = "cancelled"
+                return
+
+            wav = audio.detach().to("cpu", dtype=torch.float32)
+            if wav.ndim == 1:
+                wav = wav.unsqueeze(0)
+            if wav.shape[0] > 1:
+                wav = wav.mean(dim=0, keepdim=True)
+            if sr != NATIVE_SAMPLE_RATE:
+                wav = torchaudio.functional.resample(wav, sr, NATIVE_SAMPLE_RATE)
+            seconds = wav.shape[1] / NATIVE_SAMPLE_RATE
+            if seconds < 3.0:
+                raise ValueError(
+                    f"参照にするには短すぎる音声（{seconds:.1f}秒）しか出ませんでした。"
+                    "caption を変えるか、もう一度試してください"
+                )
+
+            # 切り出しは既存の build_reference_clips に任せる（元ファイルは一時領域に置く）
+            tmpdir = Path(tempfile.mkdtemp(prefix="irodori-design-"))
+            src = tmpdir / f"{spk_id}_src.wav"
+            write_wav_file(src, wav, NATIVE_SAMPLE_RATE)
+
+            clip_seconds = float(params.get("clip_seconds", 10.0) or 10.0)
+            clip_seconds = max(3.0, min(clip_seconds, 30.0))
+            max_clips = int(params.get("max_clips", 3) or 3)
+            max_clips = max(1, min(max_clips, 6))
+
+            with self.cfg_lock:
+                cfg_all = dict(load_speaker_config())
+                clips, duration, out_sr = build_reference_clips(spk_id, src, clip_seconds, max_clips)
+                cfg = {
+                    "name": name,
+                    "clips": [str(c.relative_to(REPO_ROOT)) for c in clips],
+                    "created_at": int(time.time()),
+                    "caption": str(params.get("caption") or "").strip(),
+                    "seed": seed,
+                }
+                try:
+                    spk = self._prepare_one(spk_id, cfg)
+                except Exception:
+                    self._remove_speaker_files(spk_id)  # 焼けなかった話者のゴミを残さない
+                    raise
+                if spk is None:
+                    self._remove_speaker_files(spk_id)
+                    raise ValueError("参照クリップが作れませんでした")
+                cfg_all[spk_id] = cfg
+                save_speaker_config(cfg_all)
+                self.speakers[spk_id] = spk
+
+            job.done = 2
+            job.seconds = duration
+            job.result = spk.to_public()
+            job.status = "done"
+            log.info("声デザイン登録が完了 job=%s id=%s (%d本 / %.1f秒 / %dHz)",
+                     job.id, spk_id, len(clips), duration, out_sr)
+        except Exception as e:  # 理由をジョブに残す（握りつぶさない）
+            log.exception("声デザイン登録に失敗 job=%s", job.id)
+            self._remove_speaker_files(spk_id)
+            job.status = "error"
+            job.error = f"{type(e).__name__}: {e}"
+        finally:
+            if tmpdir is not None:
+                shutil.rmtree(tmpdir, ignore_errors=True)
 
     def _synth_tensor(self, params: dict, text: str) -> tuple[torch.Tensor, int, Speaker]:
         req, speaker = self._build_request(params, text)
@@ -634,7 +827,7 @@ def write_wav_file(path: Path, audio: torch.Tensor, sample_rate: int) -> None:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "IrodoriTTS/0.2"
+    server_version = "IrodoriTTS/0.3"
     synth: SynthServer  # ServerRunner が差し込む
 
     def log_message(self, fmt, *args):  # 既定の stderr 直書きを logging に寄せる
@@ -684,13 +877,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(
                 200,
                 {
-                    "version": "0.2.0",
+                    "version": "0.3.0",
                     "engine": "irodori-tts",
                     "device": self.synth.device,
                     "checkpoint": self.synth.checkpoint,
                     "sample_rate": OUT_SAMPLE_RATE,
                     "native_sample_rate": NATIVE_SAMPLE_RATE,
                     "expressions": list(EXPRESSION_CAPTIONS),
+                    # 参照音声なしの声デザインが使えるチェックポイントかどうか
+                    "voice_design": bool(
+                        getattr(self.synth.runtime.model_cfg, "use_caption_condition", False)
+                    ),
                 },
             )
             return
@@ -752,6 +949,43 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 log.exception("話者の追加に失敗")
                 self._send_json(500, {"error": f"話者の追加に失敗しました: {e}"})
+            return
+
+        if path == "/design":
+            params = self._read_json()
+            if params is None:
+                return
+            try:
+                wav_bytes, seed = self.synth.design_preview(params)
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+                return
+            except Exception as e:  # 落とさずに理由を返す
+                log.exception("声デザインの試し聞きに失敗")
+                self._send_json(500, {"error": f"声デザインに失敗しました: {e}"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            # 使った種を返す。これを登録に渡すと同じ声がもう一度出る
+            self.send_header("X-Irodori-Seed", str(seed))
+            self.send_header("Access-Control-Expose-Headers", "X-Irodori-Seed")
+            self.send_header("Content-Length", str(len(wav_bytes)))
+            self.end_headers()
+            self.wfile.write(wav_bytes)
+            return
+
+        if path == "/design/speakers":
+            params = self._read_json()
+            if params is None:
+                return
+            try:
+                self._send_json(200, self.synth.start_design_speaker(params).to_public())
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+            except Exception as e:
+                log.exception("声デザイン登録の開始に失敗")
+                self._send_json(500, {"error": f"声デザイン登録に失敗しました: {e}"})
             return
 
         if path == "/render":

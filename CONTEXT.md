@@ -96,6 +96,11 @@ Tauri v2 のデスクトップアプリ（`app/`）。Vite 無し・`app/src/ind
   → ジョブをポーリングして進捗バー → **48kHz/mono/16bit WAV** を保存先（既定 `~/Music/いろとりスタジオ/`）に保存、そのまま再生
 - 設定は `~/Library/Application Support/com.takataka.irodoristudio/settings.json`、サーバログは同 `server.log`
 - ビルド: `cd app && npm install && npx tauri build` → `app/src-tauri/target/release/bundle/macos/いろとりスタジオ.app` を /Applications へ
+- **⚠️ index.html を変えたら `touch src-tauri/build.rs && cargo clean -p irodori-studio --manifest-path src-tauri/Cargo.toml --release` してからビルドする。**
+  `--release` を付けへんと `Removed 0 files` になって**クリーンされず、また古い HTML が焼かれる**（実際に踏んだ）。
+  Vite 無しの `frontendDist: ../src` 構成では、tauri のインクリメンタルビルドが index.html の変更を検知せず、
+  **Rust は再コンパイルされるのに古い HTML が埋め込まれたままの .app ができる**（2026-08-24 に実際にハマった）。
+  WebView のキャッシュ（`~/Library/Caches|WebKit/com.takataka.irodoristudio`）を消しても直らんかったらこれ
 - アイコン: `app/app-icon.svg` → `rsvg-convert` で `app-icon.png` → `npx tauri icon app-icon.png`
 
 ### server.py に足した API（0.2.0）
@@ -110,3 +115,69 @@ Tauri v2 のデスクトップアプリ（`app/`）。Vite 無し・`app/src/ind
 - `/version` の `sample_rate` は econte 互換のため 22050 のまま。`native_sample_rate: 48000` を追加
 - `GET /speakers` は `{id,name,clips}` に `clip_paths/source/created_at/protected` を**足しただけ**（econte の読み方は壊れない）
 - 実測: 話者追加 3秒（2分42秒の m4a）／レンダーは1チャンク 15秒前後（2チャンク=15.6秒の音声で約35秒）
+
+## 🎨 声をデザインする（0.3.0）— 実在の人の声なしでバーチャル話者を作る
+
+**目的**: econte（ぷれぜん君）の仮ナレで使う声を、実在の人の音声を1本も使わずに用意する。
+たかたか本人の声だけやとナレーターの声色を選べへんかった。権利面の心配もゼロになる。
+
+**しくみ**: v4.1-Small は caption（どんな声かの説明文）で条件づけできるので、`no_ref=True` にすると
+参照音声なしで声が出る（本家の VoiceDesign）。それを **参照クリップを持つ普通の話者として登録** する。
+登録さえしてまえば `_build_request` も econte 連携も既存のまま動く＝ **econte 側は改修ゼロ**。
+
+```
+caption（文章）→ no_ref で1本の長い音声を生成 → 切り分けて refs/<id>_a,b.wav
+   → latent を焼く → speakers.json に登録 → econte の 🔄 で声リストに出る
+```
+
+### 決めたこと・理由
+- **参照クリップは「1回の生成を切り分けて」作る**（文ごとに作り直さへん）。
+  no_ref は text が変わると声も揺れるので、1本録りを ffmpeg で切れば声の同一性が保証される。
+  `DESIGN_REF_TEXT`（約100文字）で実測 20.9秒 → 既存の `build_reference_clips` で 10秒×2本
+- **seed を必ず呼び出し側に返す**（`X-Irodori-Seed` ヘッダ／`GET /speakers` の `seed`）。
+  caption だけでは声は決まらず seed で別人になる＝ガチャなので、気に入った声を呼び戻す唯一の手段
+- 話者 id は `vox_<epoch>`（ファイル由来の `spk_` と区別する）。`speakers.json` に caption と seed も残す
+- `cfg_scale_speaker=0.0`（参照が無いので話者ガイダンスを効かせない）。本家 VoiceDesign UI と同じ扱い
+
+### 罠
+- **seed は19桁になる。JSON の数値で返したら JS の Number（2^53）で精度が落ちて別の声になる。**
+  `GET /speakers` も `X-Irodori-Seed` も **文字列**で返し、UI 側も文字列のまま持つこと
+- 同じ caption + 同じ seed の再現性は検証済み（2回生成して WAV が md5 完全一致）。
+  seed を変えれば同じ caption でも別人になることも確認済み
+- 生成音には silentcipher の電子透かしが乗る。その処理中に一瞬 44100Hz を通る（出力は48kHz）。
+  デザインした声はその音を参照にするので、原理上「コピーのコピー」になる
+
+### 足した API（0.3.0）
+| API | 用途 |
+|---|---|
+| `POST /design` `{caption, text?, seed?, rate?, num_steps?, sample_rate?}` | 試し聞き。WAV を返し、使った種を `X-Irodori-Seed` ヘッダ（文字列）で返す。seed 省略で毎回ちがう声 |
+| `POST /design/speakers` `{name, caption, seed, ref_text?, clip_seconds=10, max_clips=3}` | その声を話者として登録するジョブを開始。`GET /jobs/<id>` の `result` に話者が入る |
+| `GET /version` | `voice_design: true/false`（チェックポイントが caption 条件づけ対応か）を追加 |
+| `GET /speakers` | `designed / caption / seed` を追加（seed は文字列）。既存フィールドは変更なし |
+
+## 🤖 原稿AI と 絵文字ガイド（いろとりスタジオ 0.2）
+
+### 原稿AI（ヘッダの「🤖 原稿AI」）
+ローカルの CLI をヘッドレスで叩いて、caption（声の説明）と読ませる原稿を作らせるチャット。
+**既定は ChatGPT（Codex）の `gpt-5.6-terra` / effort `low`**。Claude にも切り替えられる。
+
+| | 使うもの |
+|---|---|
+| ChatGPT | `/Applications/ChatGPT.app/Contents/Resources/codex exec --skip-git-repo-check -m <model> -c model_reasoning_effort=<effort> -o <tmp> -`（プロンプトは stdin、答えは -o のファイルから読む。stdout には思考ログが混ざるため） |
+| Claude | `~/.local/bin/claude -p --model <model>`（effort は `MAX_THINKING_TOKENS` で近似: none=1024 / low=2048 / medium=8192 / high=16384 / xhigh・max=31999） |
+
+- **effort の有効値は `none / low / medium / high / xhigh / max`**。`minimal` は 400 で弾かれる
+  （`Unsupported value: 'minimal' is not supported with the 'gpt-5.6-terra-1p-codexswic-ev3' model`）
+- Rust 側 `ask_ai` / `ai_available`（main.rs）。CLAUDE.md の方針どおり **タイムアウト300秒 → kill → 2回までリトライ**
+- **コマンドは必ず絶対パスで解決する**。GUI から起動したアプリの PATH は `/usr/bin:/bin:/usr/sbin:/sbin` しか無い。
+  さらに `widen_path()` で `/opt/homebrew/bin`・`~/.local/bin` 等を前に足してから起動する
+  （codex は細い PATH でも動くことを実測で確認済み。claude は環境を削ると "Not logged in" になったので補強してある）
+- 会話履歴は CLI がステートレスなので毎回プロンプトに詰め直す（直近8往復）。
+  **いま登録されている声とその caption も一緒に渡す**ので「さっきの先輩メカで」が通じる
+- システムプロンプト `AI_SYSTEM`（index.html）に、caption の書き方・絵文字45種・110文字チャンク・
+  方言のアクセント制約まで書いてある。**出力は必ず ``` で囲ませる**規約にしてあり、
+  ブロックごとに「📝原稿へ / 🎬演技メモへ / 🎨声デザインへ / 📋コピー」で流し込める
+
+### 絵文字ガイド（ヘッダの「⋯」）
+`irodori_tts/gradio_emoji_palette.py` のパレット全45種を、感情／話し方・速さ／息・のど／口・動作の音／
+空間・エフェクト の5群に分けて例文つきで一覧表示する。行をクリックすると原稿欄のカーソル位置に挿し込む。

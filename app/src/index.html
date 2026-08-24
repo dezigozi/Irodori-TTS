@@ -66,6 +66,19 @@
   .seg button.on { background: linear-gradient(135deg, #ff8a65, #b06dff); color: #fff; }
   #caption { flex: 1; min-width: 220px; }
 
+  /* 声デザイン */
+  .drop-col { width: 250px; flex: none; display: flex; flex-direction: column; gap: 8px; }
+  .drop-col #drop { width: 100%; flex: 1; }
+  #design-btn { width: 100%; padding: 10px 12px; font-size: 12.5px; border: 1px dashed #c9b7ff; background: rgba(176,109,255,.08); color: #7a5bbf; }
+  #design-btn:hover { background: rgba(176,109,255,.16); }
+  .dialog.wide { width: 560px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-family: inherit; font-size: 11.5px; font-weight: 600; padding: 5px 10px; border-radius: 999px; border: 1px solid #dde2ee; background: #fff; color: #6b7180; cursor: pointer; }
+  .chip:hover { border-color: #b06dff; color: #7a5bbf; background: rgba(176,109,255,.07); }
+  #d-cap { min-height: 74px; font-size: 13.5px; }
+  .seed { font-size: 11px; color: #8a90a0; font-family: ui-monospace, Menlo, monospace; }
+  .spk .tag { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 6px; background: rgba(176,109,255,.14); color: #7a5bbf; margin-left: 6px; }
+
   .progress { height: 8px; border-radius: 6px; background: #e9ecf3; overflow: hidden; flex: 1; }
   .progress > div { height: 100%; width: 0; background: linear-gradient(90deg,#ff8a65,#b06dff); transition: width .3s; }
   #status { font-size: 12.5px; color: #6b7180; line-height: 1.5; white-space: pre-wrap; flex: 1; }
@@ -79,8 +92,43 @@
   .out .n { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 700; }
   .out .m { color: #8a90a0; font-size: 11px; }
 
+  /* 絵文字ガイド（⋯メニュー） */
+  #help-btn { font-size: 16px; line-height: 1; padding: 6px 12px; letter-spacing: 1px; }
+  .dialog.help { width: 680px; max-height: 82vh; }
+  .help-scroll { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px; }
+  .help-note { font-size: 12px; color: #6b7180; line-height: 1.65; background: rgba(176,109,255,.07); border-radius: 10px; padding: 9px 12px; }
+  .help-note b { color: #7a5bbf; }
+  .egroup h4 { font-size: 12px; font-weight: 800; color: #7a5bbf; margin-bottom: 6px; letter-spacing: .03em; }
+  .etable { display: flex; flex-direction: column; gap: 3px; }
+  .erow { display: grid; grid-template-columns: 40px 92px 1fr; gap: 8px; align-items: center; padding: 5px 8px; border-radius: 9px; background: #fff; cursor: pointer; transition: background .12s; }
+  .erow:hover { background: rgba(176,109,255,.10); }
+  .erow .e { font-size: 19px; text-align: center; }
+  .erow .l { font-size: 12px; font-weight: 700; color: #5a6274; }
+  .erow .x { font-size: 11.5px; color: #8a90a0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .erow.copied { background: rgba(47,158,107,.16); }
+
+  /* 原稿AI */
+  #ai-btn { font-size: 14px; padding: 6px 12px; }
+  .dialog.ai { width: 760px; max-height: 86vh; }
+  .ai-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+  .ai-bar select { font-size: 12px; padding: 5px 8px; }
+  .ai-bar .who { font-size: 11px; color: #8a90a0; }
+  #ai-log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; min-height: 220px; max-height: 46vh; padding: 4px 4px 4px 0; }
+  .msg { display: flex; flex-direction: column; gap: 5px; }
+  .msg .bub { font-size: 13px; line-height: 1.7; padding: 9px 13px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }
+  .msg.me { align-items: flex-end; }
+  .msg.me .bub { background: linear-gradient(135deg,#ff8a65,#b06dff); color: #fff; border-bottom-right-radius: 5px; max-width: 78%; }
+  .msg.ai .bub { background: #fff; color: #3a3f4b; border-bottom-left-radius: 5px; }
+  .msg .who { font-size: 10.5px; color: #8a90a0; padding: 0 6px; }
+  .block { background: #f7f5ff; border: 1px solid #e2dbff; border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; }
+  .block pre { font-family: inherit; font-size: 13px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; color: #4a4560; }
+  .block .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+  #ai-input { min-height: 62px; font-size: 13.5px; }
+  .ai-tips { font-size: 11.5px; color: #8a90a0; line-height: 1.6; }
+  .ai-tips b { color: #7a5bbf; }
+
   /* モーダル */
-  #modal { position: fixed; inset: 0; background: rgba(60,70,110,.45); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  #modal, #dmodal, #hmodal, #amodal { position: fixed; inset: 0; background: rgba(60,70,110,.45); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 10; }
   .dialog { background: #fff; border-radius: 18px; padding: 20px 22px; width: 440px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
   .dialog h3 { font-size: 15px; }
   .dialog .path { font-size: 11.5px; color: #8a90a0; word-break: break-all; }
@@ -97,6 +145,8 @@
     <p>声をドロップして声データベースを作り、原稿を読み上げて保存する</p>
     <div id="srv" class="pill off"><span class="dot"></span><span id="srv-text">サーバ確認中…</span></div>
     <button id="srv-btn" class="btn btn-sub" hidden>▶ サーバを起動</button>
+    <button id="ai-btn" class="btn btn-sub" title="原稿と声の説明をAIに作ってもらう">🤖 原稿AI</button>
+    <button id="help-btn" class="btn btn-sub" title="絵文字で演技をつける">⋯</button>
   </header>
 
   <!-- ===== 声のデータベース ===== -->
@@ -104,10 +154,13 @@
     <h2>🎤 声のデータベース <small id="spk-count"></small></h2>
     <div class="spk-row">
       <div id="spk-list"></div>
-      <div id="drop">
-        <div class="big">🎧</div>
-        <div class="t">声の元ファイルをここにドロップ</div>
-        <div class="s">m4a / wav / mp3 / flac / mp4 など<br>（30秒〜2分くらいの、なるべく高音質な声）<br>クリックでファイル選択</div>
+      <div class="drop-col">
+        <div id="drop">
+          <div class="big">🎧</div>
+          <div class="t">声の元ファイルをここにドロップ</div>
+          <div class="s">m4a / wav / mp3 / flac / mp4 など<br>（30秒〜2分くらいの、なるべく高音質な声）<br>クリックでファイル選択</div>
+        </div>
+        <button id="design-btn" class="btn">🎨 声をデザインして作る（人の声いらず）</button>
       </div>
     </div>
   </section>
@@ -169,6 +222,85 @@
     <div class="actions">
       <button id="m-cancel" class="btn btn-sub">やめる</button>
       <button id="m-ok" class="btn btn-primary" style="font-size:13px;padding:9px 20px">登録する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 原稿AI -->
+<div id="amodal" hidden>
+  <div class="dialog ai">
+    <h3>🤖 原稿AI <small style="font-weight:500;color:#8a90a0;font-size:11.5px">いろとりTTS専用。声の説明も、読ませる原稿も作れる</small></h3>
+    <div class="ai-bar">
+      <label class="f">AI
+        <select id="ai-engine">
+          <option value="codex">ChatGPT（Codex）</option>
+          <option value="claude">Claude</option>
+        </select>
+      </label>
+      <label class="f">モデル <select id="ai-model"></select></label>
+      <label class="f">エフォート
+        <select id="ai-effort">
+          <option value="none">none（考えずに即答）</option>
+          <option value="low">low（速い・既定）</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="xhigh">xhigh</option>
+          <option value="max">max（いちばんじっくり）</option>
+        </select>
+      </label>
+      <span class="who" id="ai-avail"></span>
+    </div>
+    <div class="ai-tips">
+      例:「<b>25歳の元気な自動車メカニックの声がほしい</b>」「<b>さっきの先輩メカで、後輩を叱るセリフを30秒ぶん</b>」<br>
+      返ってきた枠は <b>📝原稿へ / 🎬演技メモへ / 🎨声デザインへ</b> のボタンでそのまま流し込めるで。
+    </div>
+    <div id="ai-log"></div>
+    <textarea id="ai-input" placeholder="ほしい声や原稿を書いてな（⌘+Enter で送信）"></textarea>
+    <div class="row">
+      <button id="ai-send" class="btn btn-primary" style="font-size:13px;padding:9px 20px">送る</button>
+      <button id="ai-clear" class="btn btn-sub">会話をリセット</button>
+      <span id="ai-status" style="font-size:12px;color:#6b7180;flex:1"></span>
+    </div>
+    <div class="actions"><button id="a-close" class="btn btn-sub">閉じる</button></div>
+  </div>
+</div>
+
+<!-- 絵文字ガイド -->
+<div id="hmodal" hidden>
+  <div class="dialog help">
+    <h3>😊 絵文字で演技をつける <small style="font-weight:500;color:#8a90a0;font-size:11.5px">原稿に混ぜるだけ・クリックで挿し込む</small></h3>
+    <div class="help-note">
+      いろとりTTSは<b>原稿に混ぜた絵文字で喋り方が変わる</b>で。「怒ってから呆れる」みたいな緩急がつけられる。<br>
+      例: <code>なんべん言うたら分かるんや😠　……🙄まあ、次から気ぃつけたらええわ。</code><br>
+      下の行を<b>クリックしたら原稿欄のカーソル位置に入る</b>で。効き方はモデル任せなので、効かへん絵文字もある。
+    </div>
+    <div class="help-scroll" id="h-body"></div>
+    <div class="actions"><button id="h-close" class="btn btn-sub">閉じる</button></div>
+  </div>
+</div>
+
+<!-- 声をデザインする -->
+<div id="dmodal" hidden>
+  <div class="dialog wide">
+    <h3>🎨 声をデザインする <small style="font-weight:500;color:#8a90a0;font-size:11.5px">実在の人の声はいっさい使わへん</small></h3>
+    <label class="f" style="align-items:flex-start;flex-direction:column;gap:6px;width:100%">
+      どんな声にする？（文章で書くほど効くで）
+      <textarea id="d-cap" placeholder="例: 落ち着いた中年男性のナレーター。低めの声で、ゆっくり丁寧に読む。"></textarea>
+    </label>
+    <div class="chips" id="d-chips"></div>
+    <div class="row">
+      <button id="d-try" class="btn btn-primary" style="font-size:13px;padding:9px 20px">🎲 この説明で声を作る</button>
+      <button id="d-again" class="btn btn-sub" hidden>🔁 もう一声（別の人）</button>
+      <span id="d-seed" class="seed"></span>
+    </div>
+    <audio id="d-player" controls hidden></audio>
+    <div class="row" id="d-save-row" hidden>
+      <input type="text" id="d-name" placeholder="この声の名前（例: ナレーター花子）" style="flex:1;min-width:200px">
+      <button id="d-save" class="btn btn-primary" style="font-size:13px;padding:9px 20px">💾 この声を登録</button>
+    </div>
+    <div id="d-status" style="font-size:12.5px;color:#6b7180;min-height:18px;line-height:1.6"></div>
+    <div class="actions">
+      <button id="d-close" class="btn btn-sub">閉じる</button>
     </div>
   </div>
 </div>
@@ -244,7 +376,7 @@ function renderSpeakers() {
     const card = document.createElement("div");
     card.className = "spk" + (s.id === settings.speaker ? " active" : "");
     card.innerHTML = `<div class="avatar" style="background:${colorOf(s.id)}">${s.name.slice(0,1)}</div>
-      <div class="meta"><div class="name">${esc(s.name)}</div><div class="sub">参照クリップ ${s.clips}本${s.created_at ? " ・ " + fmtTime(s.created_at) : ""}</div></div>
+      <div class="meta"><div class="name">${esc(s.name)}${s.designed ? '<span class="tag">デザイン</span>' : ""}</div><div class="sub" title="${esc(s.caption || "")}">参照クリップ ${s.clips}本${s.created_at ? " ・ " + fmtTime(s.created_at) : ""}</div></div>
       ${s.protected ? "" : `<button class="btn btn-mini btn-danger del" title="この声を削除">🗑</button>`}`;
     card.addEventListener("click", e => {
       if (e.target.classList.contains("del")) return;
@@ -312,6 +444,435 @@ $("m-ok").addEventListener("click", async () => {
     $("m-status").textContent = "登録失敗: " + e; $("m-status").className = "err";
     $("m-ok").disabled = false; $("m-cancel").disabled = false;
   }
+});
+
+/* ===== 原稿AI（ローカルCLIで ChatGPT / Claude を叩く） ===== */
+const AI_MODELS = {
+  codex: [
+    ["gpt-5.6-terra", "gpt-5.6-terra（既定）"],
+    ["", "（codexの設定まかせ）"],
+  ],
+  claude: [
+    ["claude-opus-5", "Opus 5（賢い）"],
+    ["claude-sonnet-5", "Sonnet 5"],
+    ["claude-haiku-4-5-20251001", "Haiku 4.5（速い）"],
+    ["", "（claudeの設定まかせ）"],
+  ],
+};
+
+// いろとりTTS の仕様をAIに丸ごと教える。ここの精度がそのまま出力の精度になる。
+const AI_SYSTEM = `あなたは「いろとりスタジオ」という日本語ローカルTTSアプリ専属の原稿ライターです。
+ユーザー（たかたか）の求めに応じて、次の2種類のテキストを作ります。関西弁で気さくに、短く応対してください。
+
+## 作れるもの
+1. **声の説明（caption）** … 実在の人の声を使わず、文章だけから声を作るための説明文
+2. **読ませる原稿** … その声に読み上げさせる本文
+
+## 声の説明（caption）の書き方
+- 日本語の文章がそのまま声質の条件になる。ModernBERT で意味が読まれ、声の物理的特徴に翻訳される
+- 必ず次を具体的に入れる: **年齢感 / 性別 / 声の高さ / 声量 / テンポ / 声質 / 話し方の癖 / 相手との距離感**
+- 「営業マン」「メカニック」など職業だけでは弱い。職業＋声の特徴の両方を書く
+- 3〜4行、120〜200字くらいが目安。512トークンまで入るので長めでよい
+- 複数の登場人物を作るときは、**高さ・速さ・声量を互いに逆方向へ振って**聞き分けられるようにする
+
+## 読ませる原稿の書き方
+- 句点「。」と改行で区切って順に読み上げられる。空行は段落の切れ目として少し間があく
+- 1チャンク110文字を超えると自動で分割される。長文は分数ぶんの待ちになる
+- **絵文字を混ぜると喋り方が変わる**。使えるのは次のとおり:
+  😠怒り 🙄呆れ 😆喜び 😊楽しげ 😭泣き 😱悲鳴 😲驚き 😮息をのむ 😌安堵 😟心配 🫣照れ 😎得意げ
+  😏からかう 🤔疑問 🙏懇願 😖苦しげ 😰慌てる 🥺震え声 ⏩早口 🐢ゆっくり ⏸️間 💥勢いよく 💪力強く
+  🫶優しく 📖朗読 👂囁き 🤭含み笑い 😮‍💨吐息 🌬️息切れ 🥵うめき 😪眠そう 😴寝言 🥱あくび 🥴酔う
+  🎵鼻歌 👅咀嚼音 💋リップノイズ 🥤飲み込む 🤧咳鼻 😒舌打ち 👌相槌 👃嗅ぐ 📢エコー 📞電話越し 🤐口を塞ぐ
+- 方言はテキストに直接書く（「〜やで」等）。ただし**アクセントは標準語のままになることがある**ので、そこは期待しすぎない
+
+## 演技メモ（読ませ方の指定）
+声そのものではなく「この原稿をどう読むか」を書く欄が別にある。例:「落ち着いた声で、ゆっくり穏やかに」。
+声の説明と混ぜないこと。
+
+## 出力の決まり（重要）
+- 作ったテキストは必ず \`\`\` で囲んだコードブロックに入れる。ユーザーはブロック単位でアプリに流し込む
+- コードブロックの直前に、それが「声の説明」「原稿」「演技メモ」のどれかを1行で書く
+- ブロックの中に説明・注釈・見出しを混ぜない。そのまま使える本文だけを入れる
+- 前置きは1〜2行までにして、すぐ本題に入る`;
+
+let aiHistory = [];
+let aiBusy = false;
+
+function aiFillModels() {
+  const eng = $("ai-engine").value;
+  const sel = $("ai-model");
+  const want = settings.aiModel || "";
+  sel.innerHTML = "";
+  for (const [v, label] of AI_MODELS[eng] || []) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = label;
+    sel.appendChild(o);
+  }
+  sel.value = [...sel.options].some(o => o.value === want) ? want : (AI_MODELS[eng]?.[0]?.[0] ?? "");
+}
+
+function aiPersist() {
+  settings.aiEngine = $("ai-engine").value;
+  settings.aiModel = $("ai-model").value;
+  settings.aiEffort = $("ai-effort").value;
+  persist();
+}
+$("ai-engine").addEventListener("change", () => { aiFillModels(); aiPersist(); });
+$("ai-model").addEventListener("change", aiPersist);
+$("ai-effort").addEventListener("change", aiPersist);
+
+$("ai-btn").addEventListener("click", async () => {
+  $("amodal").hidden = false;
+  setTimeout(() => $("ai-input").focus(), 50);
+  try {
+    const av = await invoke("ai_available");
+    const parts = [];
+    parts.push(av.codex ? "ChatGPT(Codex) ✅" : "ChatGPT(Codex) ❌ 見つからへん");
+    parts.push(av.claude ? "Claude ✅" : "Claude ❌ 見つからへん");
+    $("ai-avail").textContent = parts.join(" ／ ");
+  } catch (e) { $("ai-avail").textContent = "CLIの確認に失敗: " + e; }
+});
+$("a-close").addEventListener("click", () => { $("amodal").hidden = true; });
+$("ai-clear").addEventListener("click", () => { aiHistory = []; $("ai-log").innerHTML = ""; $("ai-status").textContent = "会話をリセットしたで"; });
+
+function aiAddMsg(role, text) {
+  const log = $("ai-log");
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + (role === "me" ? "me" : "ai");
+  const who = document.createElement("div");
+  who.className = "who";
+  who.textContent = role === "me" ? "たかたか" : "原稿AI";
+  wrap.appendChild(who);
+
+  if (role === "me") {
+    const b = document.createElement("div");
+    b.className = "bub"; b.textContent = text;
+    wrap.appendChild(b);
+  } else {
+    // ```で囲まれた枠は、そのままアプリに流し込めるボタン付きで出す
+    const re = /```[^\n]*\n([\s\S]*?)```/g;
+    let last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      const before = text.slice(last, m.index).trim();
+      if (before) {
+        const b = document.createElement("div");
+        b.className = "bub"; b.textContent = before;
+        wrap.appendChild(b);
+      }
+      wrap.appendChild(aiBlock(m[1].replace(/\s+$/, "")));
+      last = m.index + m[0].length;
+    }
+    const rest = text.slice(last).trim();
+    if (rest || last === 0) {
+      const b = document.createElement("div");
+      b.className = "bub"; b.textContent = rest || text;
+      wrap.appendChild(b);
+    }
+  }
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+}
+
+function aiBlock(body) {
+  const box = document.createElement("div");
+  box.className = "block";
+  const pre = document.createElement("pre");
+  pre.textContent = body;
+  box.appendChild(pre);
+  const acts = document.createElement("div");
+  acts.className = "acts";
+  const mk = (label, fn) => {
+    const b = document.createElement("button");
+    b.className = "btn btn-mini"; b.textContent = label;
+    b.addEventListener("click", () => {
+      fn();
+      b.textContent = "入れたで！";
+      setTimeout(() => (b.textContent = label), 900);
+    });
+    acts.appendChild(b);
+  };
+  mk("📝 原稿へ", () => { $("script").value = body; $("chars").textContent = body.length; });
+  mk("🎬 演技メモへ", () => { $("caption").value = body.replace(/\n+/g, " ").trim(); });
+  mk("🎨 声デザインへ", () => {
+    $("d-cap").value = body;
+    $("amodal").hidden = true;
+    openDesign();
+    $("d-cap").value = body;
+  });
+  mk("📋 コピー", () => navigator.clipboard?.writeText(body));
+  box.appendChild(acts);
+  return box;
+}
+
+function aiBuildPrompt(question) {
+  const lines = [AI_SYSTEM, ""];
+  if (aiHistory.length) {
+    lines.push("## これまでのやりとり");
+    for (const h of aiHistory.slice(-8)) {
+      lines.push(`【${h.role === "me" ? "たかたか" : "あんた"}】${h.text}`);
+    }
+    lines.push("");
+  }
+  // いま声のデータベースに誰がおるかも渡す（「さっきの先輩メカで」が通じるように）
+  if (speakers.length) {
+    const named = speakers.map(s => s.designed && s.caption ? `${s.name}（${s.caption.replace(/\n+/g, " ")}）` : s.name);
+    lines.push("## いま登録されている声");
+    lines.push(named.join(" / "));
+    lines.push("");
+  }
+  lines.push("## 今回の依頼");
+  lines.push(question);
+  return lines.join("\n");
+}
+
+async function aiSend() {
+  if (aiBusy) return;
+  const q = $("ai-input").value.trim();
+  if (!q) { $("ai-status").textContent = "書いてから送ってな"; return; }
+  aiBusy = true;
+  $("ai-send").disabled = true;
+  $("ai-input").value = "";
+  aiAddMsg("me", q);
+  aiHistory.push({ role: "me", text: q });
+  const engine = $("ai-engine").value;
+  const model = $("ai-model").value;
+  const effort = $("ai-effort").value;
+  $("ai-status").innerHTML = `<span class="spin"></span> ${engine === "claude" ? "Claude" : "ChatGPT"} に聞いとる…（長いと1〜2分）`;
+  try {
+    const text = await invoke("ask_ai", { engine, model, effort, prompt: aiBuildPrompt(q) });
+    const clean = String(text).trim();
+    aiAddMsg("ai", clean);
+    aiHistory.push({ role: "ai", text: clean });
+    $("ai-status").textContent = "";
+  } catch (e) {
+    aiAddMsg("ai", "うまくいかへんかった: " + e);
+    $("ai-status").textContent = "";
+  }
+  aiBusy = false;
+  $("ai-send").disabled = false;
+  $("ai-input").focus();
+}
+$("ai-send").addEventListener("click", aiSend);
+$("ai-input").addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); aiSend(); }
+});
+
+/* ===== 絵文字ガイド（⋯メニュー） ===== */
+// 出どころは irodori_tts/gradio_emoji_palette.py のパレット（全45種）。
+// 効き方はモデル任せなので「入れたら必ずそうなる」ものではない。
+const EMOJI_GUIDE = [
+  ["感情", [
+    ["😠", "怒り", "なんべん言うたら分かるんや😠"],
+    ["🙄", "呆れ", "……🙄また同じミスかいな"],
+    ["😆", "喜び", "やった、受かった😆"],
+    ["😊", "楽しげ", "今日はええ天気やね😊"],
+    ["😭", "泣き声", "もう間に合わへん😭"],
+    ["😱", "悲鳴", "うわああ😱危ない！"],
+    ["😲", "驚き", "えっ😲ほんまに？"],
+    ["😮", "息をのむ", "😮そこまでやったんか"],
+    ["😌", "安堵", "よかった、間に合った😌"],
+    ["😟", "心配", "大丈夫かな😟ちょっと不安やわ"],
+    ["🫣", "照れ", "そんな褒めんといて🫣"],
+    ["😎", "得意げ", "まあ、任しとき😎"],
+    ["😏", "からかう", "ほんまにできるん😏？"],
+    ["🤔", "疑問", "🤔それでほんまに合うてる？"],
+    ["🙏", "懇願", "頼むわ🙏この通りや"],
+    ["😖", "苦しげ", "あかん、しんどい😖"],
+    ["😰", "慌てる", "え、え、どうしよ😰"],
+    ["🥺", "震え声", "……ごめんなさい🥺"],
+  ]],
+  ["話し方・速さ", [
+    ["⏩", "早口", "⏩結論から言うと在庫がありません"],
+    ["🐢", "ゆっくり", "🐢ここ、大事なとこやで"],
+    ["⏸️", "間・沈黙", "そして⏸️結果はこうなりました"],
+    ["💥", "勢いよく", "いくで💥一気に行こか"],
+    ["💪", "力強く", "絶対にやりきります💪"],
+    ["🫶", "優しく", "無理せんでええからね🫶"],
+    ["📖", "朗読・ナレーション", "📖むかしむかし、あるところに"],
+    ["👂", "囁き", "👂ここだけの話やねんけど"],
+    ["🤭", "含み笑い", "それ、さっき言うたやん🤭"],
+  ]],
+  ["息・のど", [
+    ["😮‍💨", "吐息・溜息", "はぁ😮‍💨今日は疲れたわ"],
+    ["🌬️", "息切れ", "🌬️走ってきた、間に合った？"],
+    ["🥵", "うめき声", "🥵重たい、これ持てへん"],
+    ["😪", "眠そう", "😪もう寝るわ、おやすみ"],
+    ["😴", "寝言・いびき", "😴……zzz"],
+    ["🥱", "あくび", "🥱ふぁ、朝早いなあ"],
+    ["🥴", "酔う", "🥴もう一杯だけいこか"],
+    ["🎵", "鼻歌", "🎵ふんふんふーん"],
+  ]],
+  ["口・動作の音", [
+    ["👅", "咀嚼・水音", "👅うん、これ美味しい"],
+    ["💋", "リップノイズ", "💋ほな、はじめよか"],
+    ["🥤", "飲み込む", "🥤……ごくり、緊張するわ"],
+    ["🤧", "咳・鼻すすり", "🤧すんません、風邪ぎみで"],
+    ["😒", "舌打ち", "😒ちっ、また渋滞かいな"],
+    ["👌", "相槌", "👌なるほど、ええやん"],
+    ["👃", "嗅ぐ音", "👃なんかええ匂いせえへん？"],
+  ]],
+  ["空間・エフェクト", [
+    ["📢", "エコー・リバーブ", "📢まもなく開演いたします"],
+    ["📞", "電話越し", "📞もしもし、聞こえてる？"],
+    ["🤐", "口を塞ぐ", "🤐（もごもご）ここから出して"],
+  ]],
+];
+
+(() => {
+  const box = $("h-body");
+  for (const [group, items] of EMOJI_GUIDE) {
+    const g = document.createElement("div");
+    g.className = "egroup";
+    g.innerHTML = `<h4>${esc(group)}</h4>`;
+    const t = document.createElement("div");
+    t.className = "etable";
+    for (const [emoji, label, sample] of items) {
+      const row = document.createElement("div");
+      row.className = "erow";
+      row.title = `クリックで原稿に「${emoji}」を入れる`;
+      row.innerHTML = `<span class="e">${emoji}</span><span class="l">${esc(label)}</span><span class="x">${esc(sample)}</span>`;
+      row.addEventListener("click", () => {
+        insertIntoScript(emoji);
+        row.classList.add("copied");
+        setTimeout(() => row.classList.remove("copied"), 450);
+      });
+      t.appendChild(row);
+    }
+    g.appendChild(t);
+    box.appendChild(g);
+  }
+})();
+
+// 原稿欄のカーソル位置に挿し込む（選択中ならそこを置き換える）
+function insertIntoScript(text) {
+  const ta = $("script");
+  const start = ta.selectionStart ?? ta.value.length;
+  const end = ta.selectionEnd ?? ta.value.length;
+  ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+  const pos = start + text.length;
+  ta.setSelectionRange(pos, pos);
+  $("chars").textContent = ta.value.length;
+}
+
+$("help-btn").addEventListener("click", () => { $("hmodal").hidden = false; });
+$("h-close").addEventListener("click", () => { $("hmodal").hidden = true; });
+
+/* ===== 声をデザインする（参照音声なし・完全バーチャル） ===== */
+// seed は 19桁になるので必ず文字列で持つ。Number にすると精度が落ちて同じ声を呼び戻せなくなる。
+let designSeed = null;
+let designBlobUrl = null;
+const DESIGN_PRESETS = [
+  "落ち着いた中年男性のナレーター。低めの声で、ゆっくり丁寧に読む。",
+  "20代くらいの明るい女性の声。少しハスキーで、親しみやすくテンポよく話す。",
+  "優しいお姉さんの声。やわらかく、ゆったりと語りかけるように話す。",
+  "元気な男の子の声。高めで、はきはきと勢いよく話す。",
+  "女性アナウンサーの声。癖がなく、聞き取りやすい標準的な読み。",
+  "渋い男性の低音。落ち着いていて、重みのある語り口。",
+];
+function dStatus(msg, cls) { const e = $("d-status"); e.innerHTML = msg || ""; e.className = cls || ""; }
+
+function openDesign() {
+  if (!running) { setStatus("先にサーバを起動してな（右上のボタン）", "err"); return; }
+  designSeed = null;
+  $("d-seed").textContent = "";
+  $("d-player").hidden = true;
+  $("d-save-row").hidden = true;
+  $("d-again").hidden = true;
+  $("d-name").value = "";
+  dStatus("");
+  $("dmodal").hidden = false;
+  setTimeout(() => $("d-cap").focus(), 50);
+}
+$("design-btn").addEventListener("click", openDesign);
+$("d-close").addEventListener("click", () => { $("dmodal").hidden = true; $("d-player").pause(); });
+
+// プリセットのチップ
+(() => {
+  const box = $("d-chips");
+  for (const t of DESIGN_PRESETS) {
+    const b = document.createElement("button");
+    b.className = "chip"; b.type = "button";
+    b.textContent = t.length > 22 ? t.slice(0, 21) + "…" : t;
+    b.title = t;
+    b.addEventListener("click", () => { $("d-cap").value = t; $("d-cap").focus(); });
+    box.appendChild(b);
+  }
+})();
+
+// 試し聞き。seed を渡さなければ毎回ちがう人が出る（＝ガチャ）
+async function designPreview(caption, seed) {
+  const body = { caption };
+  if (seed) body.seed = seed;  // 文字列のまま送る。サーバ側で int に直す
+  const r = await fetch(serverUrl + "/design", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error(j.error || `HTTP ${r.status}`);
+  }
+  const used = r.headers.get("X-Irodori-Seed");
+  if (!used) throw new Error("サーバが seed を返してへん（server.py が古いかも）");
+  return { blob: await r.blob(), seed: used };
+}
+
+async function runDesignTry(seed) {
+  const caption = $("d-cap").value.trim();
+  if (!caption) { dStatus("どんな声にしたいか書いてな", "err"); return; }
+  $("d-try").disabled = true; $("d-again").disabled = true; $("d-save").disabled = true;
+  dStatus('<span class="spin"></span> 声を作ってるで…（15秒くらい）');
+  try {
+    const res = await designPreview(caption, seed);
+    designSeed = res.seed;
+    if (designBlobUrl) URL.revokeObjectURL(designBlobUrl);
+    designBlobUrl = URL.createObjectURL(res.blob);
+    const pl = $("d-player"); pl.hidden = false; pl.src = designBlobUrl; pl.play();
+    $("d-seed").textContent = "seed " + designSeed;
+    $("d-again").hidden = false;
+    $("d-save-row").hidden = false;
+    dStatus("この声でええ？　ちゃうかったら「🔁 もう一声」で別の人が出るで。気に入ったら名前つけて登録や", "ok");
+  } catch (e) {
+    dStatus("声づくり失敗: " + e, "err");
+  }
+  $("d-try").disabled = false; $("d-again").disabled = false; $("d-save").disabled = false;
+}
+$("d-try").addEventListener("click", () => runDesignTry(null));
+$("d-again").addEventListener("click", () => runDesignTry(null));
+
+// 気に入った声を、参照クリップを持つ普通の話者として登録する
+$("d-save").addEventListener("click", async () => {
+  const name = $("d-name").value.trim();
+  const caption = $("d-cap").value.trim();
+  if (!name) { dStatus("名前を入れてな", "err"); return; }
+  if (!designSeed) { dStatus("先に「🎲 この説明で声を作る」で試し聞きしてな", "err"); return; }
+  $("d-save").disabled = true; $("d-try").disabled = true; $("d-again").disabled = true;
+  dStatus('<span class="spin"></span> この声の参照クリップを作ってるで…（30〜60秒）');
+  try {
+    const job = await api("POST", "/design/speakers", { name, caption, seed: designSeed });
+    let last = null;
+    while (true) {
+      await new Promise(r => setTimeout(r, 1500));
+      last = await api("GET", "/jobs/" + job.id);
+      if (last.status === "running" || last.status === "queued") {
+        dStatus(`<span class="spin"></span> 参照クリップを作成中… ${last.done}/${last.total}`);
+        continue;
+      }
+      break;
+    }
+    if (last.status !== "done") throw new Error(last.error || last.status);
+    const spk = last.result || {};
+    $("dmodal").hidden = true;
+    $("d-player").pause();
+    settings.speaker = spk.id || settings.speaker; persist();
+    await loadSpeakers();
+    setStatus(
+      `「${name}」を声のデータベースに登録したで！（参照クリップ ${spk.clips}本 / ${last.seconds}秒）\n` +
+      `econte の仮ナレスタジオで「🔄 いろとりTTSを確認・起動」を押したら、この声が選べるようになるで。`,
+      "ok"
+    );
+  } catch (e) {
+    dStatus("登録失敗: " + e, "err");
+  }
+  $("d-save").disabled = false; $("d-try").disabled = false; $("d-again").disabled = false;
 });
 
 /* ===== 原稿 ===== */
@@ -437,6 +998,10 @@ function persist() {
     $("outdir").textContent = settings.outputDir; $("outdir").title = settings.outputDir;
     $("rate").value = settings.rate; $("rate-v").textContent = (settings.rate/180).toFixed(2) + "x";
     $("expr").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === settings.expression));
+    // 原稿AI の設定（既定は ChatGPT の terra）
+    $("ai-engine").value = settings.aiEngine || "codex";
+    $("ai-effort").value = settings.aiEffort || "low";
+    aiFillModels();
     if (!info.exists) setStatus(`いろとりTTSが ${info.repoDir} に見つからへん。リポジトリを置いてな`, "err");
     await loadOutputs();
     const ok = await refreshServer();
