@@ -369,7 +369,7 @@ function renderSpeakers() {
   const list = $("spk-list"); list.innerHTML = "";
   $("spk-count").textContent = speakers.length ? `${speakers.length} 人` : "";
   if (!speakers.length) {
-    list.innerHTML = `<div style="font-size:12.5px;color:#8a90a0;align-self:center">${running ? "話者がまだ無いで。右のボックスに声をドロップしてな" : "サーバを起動すると話者が出てくるで"}</div>`;
+    list.innerHTML = `<div style="font-size:12.5px;color:#8a90a0;align-self:center;line-height:1.7">${running ? "声がまだ1人もおらんね。<br>右の「🎨 声をデザインして作る」やったら、<br>人の声が無くても今すぐ作れるで" : "サーバを起動すると声が出てくるで"}</div>`;
   }
   if (!speakers.find(s => s.id === settings.speaker)) settings.speaker = speakers[0]?.id || "";
   for (const s of speakers) {

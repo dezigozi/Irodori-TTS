@@ -405,9 +405,13 @@ class SynthServer:
             if spk:
                 self.speakers[spk_id] = spk
         if not self.speakers:
-            raise SystemExit(
-                "使える話者がひとつもありません。refs/ に参照音声を置くか speakers.json を直してください"
+            # 昔はここで落としていたが、声デザイン（参照音声なし）で話者を作れるようになったので
+            # 起動は通す。clone 直後や新しいマシンでも、まず声をデザインしてもらえばいい。
+            log.warning(
+                "話者がひとつもありません。いろとりスタジオの「🎨 声をデザインして作る」か、"
+                "声の元ファイルのドロップで作ってください（POST /design/speakers・POST /speakers）"
             )
+            return
         log.info("話者: %s", ", ".join(f"{s.id}({len(s.clips)}本)" for s in self.speakers.values()))
 
     def add_speaker(self, params: dict) -> dict:
@@ -474,8 +478,6 @@ class SynthServer:
             cfg_all = dict(load_speaker_config())
             if spk_id not in cfg_all and spk_id not in self.speakers:
                 raise ValueError(f"知らない話者です: {spk_id}")
-            if len([s for s in self.speakers if s != spk_id]) == 0:
-                raise ValueError("最後の1話者は消せません")
             cfg_all.pop(spk_id, None)
             save_speaker_config(cfg_all)
             self.speakers.pop(spk_id, None)
@@ -486,6 +488,11 @@ class SynthServer:
     # ---------------- 合成 ----------------
 
     def _build_request(self, params: dict, text: str) -> tuple[SamplingRequest, Speaker]:
+        if not self.speakers:
+            raise ValueError(
+                "話者がひとつもありません。先に「🎨 声をデザインして作る」か"
+                "声の元ファイルのドロップで声を作ってください"
+            )
         spk_id = str(params.get("speaker") or next(iter(self.speakers)))
         speaker = self.speakers.get(spk_id)
         if speaker is None:
