@@ -92,8 +92,14 @@ DESIGN_REF_TEXT = (
 # モデルの上限が30秒。参照用は長めに出したいので目一杯まで許す
 DESIGN_MAX_SECONDS = 30.0
 
-# 長文レンダー: 1チャンクの上限文字数（max_text_len=256トークン / max_seconds=30 の安全圏）
+# 1チャンクの上限文字数（max_text_len=256トークン / max_seconds=30 の安全圏）。
+# モデルは尺を max_seconds=30 でクランプする（inference_runtime の latent_steps）ので、
+# 30秒を超える文章を丸ごと投げると**枠に押し込むぶん早口になる**。110字はその安全圏。
+# 長文レンダー（/render）だけやなく、1発合成（/synthesis）もここで切る
 RENDER_CHUNK_CHARS = 110
+# /synthesis で切ったときの、チャンク間に挟む無音（ms）。
+# 句読点で切っているので、レンダー（350ms＝段落の間）よりは詰めて自然に繋ぐ
+SYNTH_CHUNK_PAUSE_MS = 150
 
 log = logging.getLogger("irodori.server")
 
@@ -732,6 +738,35 @@ class SynthServer:
         )
         return result.audio, int(result.sample_rate), speaker
 
+    @staticmethod
+    def _to_native(audio: torch.Tensor, sr: int) -> torch.Tensor:
+        """モノラル・NATIVE_SAMPLE_RATE に揃える（チャンクを繋ぐ前処理）"""
+        wav = audio.detach().to("cpu", dtype=torch.float32)
+        if wav.ndim == 1:
+            wav = wav.unsqueeze(0)
+        if wav.shape[0] > 1:
+            wav = wav.mean(dim=0, keepdim=True)
+        if sr != NATIVE_SAMPLE_RATE:
+            wav = torchaudio.functional.resample(wav, sr, NATIVE_SAMPLE_RATE)
+        return wav
+
+    def _synth_chunked(self, params: dict, text: str, pause_ms: int) -> tuple[torch.Tensor, int]:
+        """長い文章は句読点で切って合成し、繋いで返す。
+        切らずに投げると尺が max_seconds=30 でクランプされて早口になる
+        （256字を1発で投げると約2倍速になった実測あり）。"""
+        chunks = split_script(text)
+        if len(chunks) <= 1:
+            audio, sr, _ = self._synth_tensor(params, text)
+            return audio, sr
+        log.info("長文を分割して合成 chars=%d chunks=%d", len(text), len(chunks))
+        pieces: list[torch.Tensor] = []
+        for i, chunk in enumerate(chunks):
+            audio, sr, _ = self._synth_tensor(params, chunk)
+            pieces.append(self._to_native(audio, sr))
+            if pause_ms > 0 and i < len(chunks) - 1:
+                pieces.append(torch.zeros(1, int(NATIVE_SAMPLE_RATE * pause_ms / 1000)))
+        return torch.cat(pieces, dim=1), NATIVE_SAMPLE_RATE
+
     def synthesize(self, params: dict) -> bytes:
         text = str(params.get("text", "")).strip()
         if not text:
@@ -739,7 +774,9 @@ class SynthServer:
         out_sr = int(params.get("sample_rate", OUT_SAMPLE_RATE) or OUT_SAMPLE_RATE)
         if out_sr not in ALLOWED_SAMPLE_RATES:
             raise ValueError(f"sample_rate は {sorted(ALLOWED_SAMPLE_RATES)} のどれかにしてください")
-        audio, sr, _ = self._synth_tensor(params, text)
+        pause_ms = int(params.get("pause_ms", SYNTH_CHUNK_PAUSE_MS) or 0)
+        pause_ms = max(0, min(3000, pause_ms))
+        audio, sr = self._synth_chunked(params, text, pause_ms)
         return to_wav_bytes(audio, sr, out_sr)
 
     # ---------------- 長文レンダー（ジョブ） ----------------
@@ -786,14 +823,7 @@ class SynthServer:
                     log.info("レンダー中断 job=%s (%d/%d)", job.id, job.done, job.total)
                     return
                 audio, sr, _ = self._synth_tensor(params, chunk)
-                wav = audio.detach().to("cpu", dtype=torch.float32)
-                if wav.ndim == 1:
-                    wav = wav.unsqueeze(0)
-                if wav.shape[0] > 1:
-                    wav = wav.mean(dim=0, keepdim=True)
-                if sr != NATIVE_SAMPLE_RATE:
-                    wav = torchaudio.functional.resample(wav, sr, NATIVE_SAMPLE_RATE)
-                pieces.append(wav)
+                pieces.append(self._to_native(audio, sr))
                 if pause_ms > 0 and i < len(chunks) - 1:
                     pieces.append(torch.zeros(1, int(NATIVE_SAMPLE_RATE * pause_ms / 1000)))
                 job.done = i + 1
@@ -906,7 +936,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(
                 200,
                 {
-                    "version": "0.3.1",
+                    "version": "0.3.2",
                     "engine": "irodori-tts",
                     "device": self.synth.device,
                     "checkpoint": self.synth.checkpoint,
