@@ -39,14 +39,20 @@
   /* 話者 */
   .spk-row { display: flex; gap: 12px; align-items: stretch; }
   #spk-list { flex: 1; display: flex; flex-wrap: wrap; gap: 10px; align-content: flex-start; min-height: 84px; }
-  .spk { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: #fff; border: 2px solid transparent; cursor: pointer; min-width: 190px; box-shadow: 0 1px 6px rgba(60,70,110,.06); transition: border-color .15s; }
+  .spk { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 26px 10px 12px; border-radius: 14px; background: #fff; border: 2px solid transparent; cursor: pointer; min-width: 190px; box-shadow: 0 1px 6px rgba(60,70,110,.06); transition: border-color .15s; }
   .spk.active { border-color: #b06dff; box-shadow: 0 0 0 3px rgba(176,109,255,.15); }
   .spk .avatar { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: #fff; flex: none; }
   .spk .meta { flex: 1; min-width: 0; }
   .spk .name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .spk .sub { font-size: 11px; color: #8a90a0; }
-  .spk .del { opacity: 0; transition: opacity .15s; }
-  .spk:hover .del { opacity: 1; }
+  .spk .dots { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; padding: 0; font-size: 14px; line-height: 1; letter-spacing: 1px; color: #a4aab8; background: transparent; border: none; border-radius: 8px; cursor: pointer; font-family: inherit; opacity: .5; transition: opacity .15s, background .15s; }
+  .spk:hover .dots, .spk .dots.on { opacity: 1; color: #7a5bbf; background: rgba(176,109,255,.14); }
+  #spk-menu { position: fixed; z-index: 20; background: #fff; border: 1px solid #e3e7f0; border-radius: 12px; padding: 5px; box-shadow: 0 10px 30px rgba(60,70,110,.18); display: flex; flex-direction: column; gap: 2px; min-width: 218px; }
+  #spk-menu button { font-family: inherit; font-size: 12.5px; font-weight: 600; text-align: left; padding: 8px 10px; border: none; background: transparent; color: #5a6274; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+  #spk-menu button:hover { background: rgba(176,109,255,.10); color: #7a5bbf; }
+  #spk-menu button.danger { color: #d64a66; }
+  #spk-menu button.danger:hover { background: rgba(214,74,102,.10); color: #d64a66; }
+  #spk-menu .sep { height: 1px; background: #eef0f6; margin: 3px 4px; }
   #drop { width: 250px; flex: none; border: 2px dashed #c9b7ff; border-radius: 16px; background: rgba(255,255,255,.5); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 14px 12px; text-align: center; cursor: pointer; transition: all .15s; }
   #drop:hover, #drop.dragover { border-color: #b06dff; background: rgba(176,109,255,.10); transform: scale(1.02); }
   #drop .big { font-size: 28px; }
@@ -78,6 +84,16 @@
   #d-cap { min-height: 74px; font-size: 13.5px; }
   .seed { font-size: 11px; color: #8a90a0; font-family: ui-monospace, Menlo, monospace; }
   .spk .tag { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 6px; background: rgba(176,109,255,.14); color: #7a5bbf; margin-left: 6px; }
+  #d-from { font-size: 11.5px; color: #7a5bbf; background: rgba(176,109,255,.09); border-radius: 10px; padding: 8px 11px; line-height: 1.6; }
+
+  /* この声のプロンプト */
+  #p-body { display: flex; flex-direction: column; gap: 10px; }
+  #p-cap { min-height: 120px; font-size: 13.5px; }
+  .p-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 11.5px; color: #8a90a0; }
+  .p-note { font-size: 12.5px; color: #6b7180; line-height: 1.7; background: rgba(176,109,255,.07); border-radius: 10px; padding: 10px 12px; }
+  .p-note b { color: #7a5bbf; }
+  .p-keep { font-size: 11.5px; color: #6b7180; font-weight: 600; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .p-keep input { accent-color: #b06dff; }
 
   .progress { height: 8px; border-radius: 6px; background: #e9ecf3; overflow: hidden; flex: 1; }
   .progress > div { height: 100%; width: 0; background: linear-gradient(90deg,#ff8a65,#b06dff); transition: width .3s; }
@@ -128,7 +144,7 @@
   .ai-tips b { color: #7a5bbf; }
 
   /* モーダル */
-  #modal, #dmodal, #hmodal, #amodal { position: fixed; inset: 0; background: rgba(60,70,110,.45); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  #modal, #dmodal, #hmodal, #amodal, #pmodal { position: fixed; inset: 0; background: rgba(60,70,110,.45); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 10; }
   .dialog { background: #fff; border-radius: 18px; padding: 20px 22px; width: 440px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
   .dialog h3 { font-size: 15px; }
   .dialog .path { font-size: 11.5px; color: #8a90a0; word-break: break-all; }
@@ -283,6 +299,7 @@
 <div id="dmodal" hidden>
   <div class="dialog wide">
     <h3>🎨 声をデザインする <small style="font-weight:500;color:#8a90a0;font-size:11.5px">実在の人の声はいっさい使わへん</small></h3>
+    <div id="d-from" hidden></div>
     <label class="f" style="align-items:flex-start;flex-direction:column;gap:6px;width:100%">
       どんな声にする？（文章で書くほど効くで）
       <textarea id="d-cap" placeholder="例: 落ち着いた中年男性のナレーター。低めの声で、ゆっくり丁寧に読む。"></textarea>
@@ -301,6 +318,33 @@
     <div id="d-status" style="font-size:12.5px;color:#6b7180;min-height:18px;line-height:1.6"></div>
     <div class="actions">
       <button id="d-close" class="btn btn-sub">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- この声のプロンプト -->
+<div id="pmodal" hidden>
+  <div class="dialog wide">
+    <h3>📋 <span id="p-title"></span> のプロンプト <small style="font-weight:500;color:#8a90a0;font-size:11.5px">この声を作ったときの説明文</small></h3>
+    <div id="p-note" class="p-note" hidden></div>
+    <div id="p-body">
+      <label class="f" style="align-items:flex-start;flex-direction:column;gap:6px;width:100%">
+        声の説明（ここを書き替えたら、そのまま新しい声が作れるで）
+        <textarea id="p-cap"></textarea>
+      </label>
+      <div class="chips" id="p-chips"></div>
+      <div class="p-meta">
+        <span id="p-seed" class="seed"></span>
+        <span id="p-when"></span>
+        <button id="p-copy" class="btn btn-mini">📋 コピー</button>
+      </div>
+      <label class="p-keep" id="p-keep-row">
+        <input type="checkbox" id="p-keepseed"> 元の声の seed を引き継ぐ（似た声のまま口調だけ変えたいとき・そうなる保証はない）
+      </label>
+    </div>
+    <div class="actions">
+      <button id="p-close" class="btn btn-sub">閉じる</button>
+      <button id="p-design" class="btn btn-primary" style="font-size:13px;padding:9px 20px">🎨 この説明で新しい声を作る</button>
     </div>
   </div>
 </div>
@@ -366,6 +410,7 @@ async function loadSpeakers() {
   renderSpeakers();
 }
 function renderSpeakers() {
+  closeSpkMenu();  // 15秒ごとの自動更新で描き直されると ⋯ メニューが宙に浮くので先に閉じる
   const list = $("spk-list"); list.innerHTML = "";
   $("spk-count").textContent = speakers.length ? `${speakers.length} 人` : "";
   if (!speakers.length) {
@@ -377,16 +422,14 @@ function renderSpeakers() {
     card.className = "spk" + (s.id === settings.speaker ? " active" : "");
     card.innerHTML = `<div class="avatar" style="background:${colorOf(s.id)}">${s.name.slice(0,1)}</div>
       <div class="meta"><div class="name">${esc(s.name)}${s.designed ? '<span class="tag">デザイン</span>' : ""}</div><div class="sub" title="${esc(s.caption || "")}">参照クリップ ${s.clips}本${s.created_at ? " ・ " + fmtTime(s.created_at) : ""}</div></div>
-      ${s.protected ? "" : `<button class="btn btn-mini btn-danger del" title="この声を削除">🗑</button>`}`;
+      <button class="dots" title="この声のメニュー（プロンプトを見る・削除）">⋯</button>`;
     card.addEventListener("click", e => {
-      if (e.target.classList.contains("del")) return;
+      if (e.target.classList.contains("dots")) return;
       settings.speaker = s.id; persist(); renderSpeakers();
     });
-    card.querySelector(".del")?.addEventListener("click", async () => {
-      const yes = await invoke("plugin:dialog|confirm", { message: `「${s.name}」を声のデータベースから削除する？\n参照クリップも消えるで。`, title: "いろとりスタジオ", kind: "warning" });
-      if (!yes) return;
-      try { await api("DELETE", "/speakers/" + encodeURIComponent(s.id)); setStatus(`「${s.name}」を削除したで`, "ok"); await loadSpeakers(); }
-      catch (e) { setStatus("削除失敗: " + e, "err"); }
+    card.querySelector(".dots").addEventListener("click", e => {
+      e.stopPropagation();
+      openSpkMenu(e.currentTarget, s);
     });
     list.appendChild(card);
   }
@@ -395,6 +438,143 @@ function renderSpeakers() {
   sel.value = settings.speaker;
 }
 $("speaker").addEventListener("change", () => { settings.speaker = $("speaker").value; persist(); renderSpeakers(); });
+
+/* ===== 声カードの ⋯ メニュー ===== */
+let spkMenu = null;
+function closeSpkMenu() {
+  if (!spkMenu) return;
+  spkMenu.btn?.classList.remove("on");
+  spkMenu.el.remove();
+  spkMenu = null;
+  document.removeEventListener("mousedown", onMenuOutside, true);
+  document.removeEventListener("keydown", onMenuKey, true);
+}
+function onMenuOutside(e) { if (spkMenu && !spkMenu.el.contains(e.target) && e.target !== spkMenu.btn) closeSpkMenu(); }
+function onMenuKey(e) { if (e.key === "Escape") closeSpkMenu(); }
+
+function openSpkMenu(btn, s) {
+  const same = spkMenu && spkMenu.btn === btn;
+  closeSpkMenu();
+  if (same) return;  // 同じ ⋯ をもう一回押したら閉じるだけ
+  const el = document.createElement("div");
+  el.id = "spk-menu";
+  const add = (label, cls, fn) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.addEventListener("click", () => { closeSpkMenu(); fn(); });
+    el.appendChild(b);
+  };
+  add("📋 この声のプロンプトを見る", "", () => openPrompt(s));
+  if (s.designed && s.caption) {
+    add("🎨 このプロンプトを元に新しい声を作る", "", () => openDesign({
+      caption: s.caption, seed: s.seed, fromName: s.name, suggestName: nextName(s.name),
+    }));
+  }
+  if (s.id !== settings.speaker) add("🎧 この声を選ぶ", "", () => { settings.speaker = s.id; persist(); renderSpeakers(); });
+  if (!s.protected) {
+    const sep = document.createElement("div"); sep.className = "sep"; el.appendChild(sep);
+    add("🗑 この声を削除", "danger", () => delSpeaker(s));
+  }
+  document.body.appendChild(el);
+  const r = btn.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)) + "px";
+  el.style.top = (r.bottom + h + 10 > window.innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4) + "px";
+  btn.classList.add("on");
+  spkMenu = { el, btn };
+  // 監視は mousedown で張る。今のクリックの mousedown はもう終わってるから、
+  // すぐ登録しても自分で自分を閉じてしまうことはない（setTimeout で遅らせると取りこぼす）
+  document.addEventListener("mousedown", onMenuOutside, true);
+  document.addEventListener("keydown", onMenuKey, true);
+}
+window.addEventListener("resize", closeSpkMenu);
+document.querySelector(".view").addEventListener("scroll", closeSpkMenu);
+
+async function delSpeaker(s) {
+  const yes = await invoke("plugin:dialog|confirm", { message: `「${s.name}」を声のデータベースから削除する？\n参照クリップも消えるで。`, title: "いろとりスタジオ", kind: "warning" });
+  if (!yes) return;
+  try { await api("DELETE", "/speakers/" + encodeURIComponent(s.id)); setStatus(`「${s.name}」を削除したで`, "ok"); await loadSpeakers(); }
+  catch (e) { setStatus("削除失敗: " + e, "err"); }
+}
+
+// 「フロント女子」→「フロント女子2」、「ナレーション3」→「ナレーション4」
+function nextName(name) {
+  const m = String(name).match(/^(.*?)(\d+)$/);
+  return m ? m[1] + (parseInt(m[2], 10) + 1) : name + "2";
+}
+
+/* ===== この声のプロンプトを見る／書き替えて作り直す ===== */
+// 声を「もうちょい甘えた声で」みたいに寄せるための追記フレーズ
+const CAPTION_TWEAKS = [
+  ["もっと甘えた声", "もっと甘えた、鼻にかかったやわらかい声で、語尾をふんわり伸ばして話す。"],
+  ["もっと落ち着いて", "もっと落ち着いた低めの声で、ゆっくり間をとって話す。"],
+  ["もっと元気に", "もっと元気で明るく、テンポを上げてはきはきと話す。"],
+  ["もっと低い声", "声の高さをもっと低くして、太さと重みのある響きにする。"],
+  ["もっと高い声", "声の高さをもっと高くして、軽やかで明るい響きにする。"],
+  ["やさしく丁寧に", "やさしく丁寧に、相手を気づかうようにやわらかく話す。"],
+  ["ささやくように", "ささやくように小さめの声で、息まじりの近い距離感で話す。"],
+  ["関西のイントネーション", "関西のイントネーションで、親しみやすく気さくに話す。"],
+];
+let promptTarget = null;
+
+function openPrompt(s) {
+  promptTarget = s;
+  $("p-title").textContent = s.name;
+  const cap = (s.caption || "").trim();
+  $("p-note").hidden = !!cap;
+  $("p-body").hidden = !cap;
+  $("p-design").hidden = !cap;
+  if (!cap) {
+    $("p-note").innerHTML = `「${esc(s.name)}」は<b>音声ファイルから作った声</b>やから、プロンプト（声の説明文）は残ってへんで。<br>` +
+      `プロンプトが残ってるのは「🎨 声をデザインして作る」で作った子だけや。`;
+  } else {
+    $("p-cap").value = cap;
+    $("p-seed").textContent = s.seed ? "seed " + s.seed : "";
+    $("p-when").textContent = s.created_at ? "作成 " + fmtTime(s.created_at) : "";
+    $("p-keep-row").hidden = !s.seed;
+    $("p-keepseed").checked = false;
+  }
+  $("pmodal").hidden = false;
+  if (cap) setTimeout(() => $("p-cap").focus(), 50);
+}
+$("p-close").addEventListener("click", () => { $("pmodal").hidden = true; });
+$("p-design").addEventListener("click", () => {
+  const caption = $("p-cap").value.trim();
+  if (!caption) return;
+  const s = promptTarget || {};
+  $("pmodal").hidden = true;
+  openDesign({
+    caption,
+    seed: $("p-keepseed").checked ? s.seed : null,
+    fromName: s.name,
+    suggestName: s.name ? nextName(s.name) : "",
+  });
+});
+$("p-copy").addEventListener("click", async () => {
+  const btn = $("p-copy"), text = $("p-cap").value;
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) { $("p-cap").select(); document.execCommand("copy"); }
+  btn.textContent = "✅ コピーしたで";
+  setTimeout(() => { btn.textContent = "📋 コピー"; }, 1400);
+});
+// 追記フレーズのチップ（押したら説明文の末尾に足す）
+(() => {
+  const box = $("p-chips");
+  for (const [label, text] of CAPTION_TWEAKS) {
+    const b = document.createElement("button");
+    b.className = "chip"; b.type = "button"; b.textContent = "＋" + label; b.title = text;
+    b.addEventListener("click", () => {
+      const ta = $("p-cap");
+      const cur = ta.value.replace(/\s+$/, "");
+      ta.value = cur ? cur + "\n" + text : text;
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      ta.scrollTop = ta.scrollHeight;
+    });
+    box.appendChild(b);
+  }
+})();
+
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
 /* ドロップ受付 */
@@ -760,7 +940,9 @@ $("h-close").addEventListener("click", () => { $("hmodal").hidden = true; });
 /* ===== 声をデザインする（参照音声なし・完全バーチャル） ===== */
 // seed は 19桁になるので必ず文字列で持つ。Number にすると精度が落ちて同じ声を呼び戻せなくなる。
 let designSeed = null;
+let inheritSeed = null;   // 既存の声から引き継いだ seed。最初の試し聞きだけ使う
 let designBlobUrl = null;
+function setTryLabel() { $("d-try").textContent = inheritSeed ? "🎲 元の声の seed でこの説明を試す" : "🎲 この説明で声を作る"; }
 const DESIGN_PRESETS = [
   "落ち着いた中年男性のナレーター。低めの声で、ゆっくり丁寧に読む。",
   "20代くらいの明るい女性の声。少しハスキーで、親しみやすくテンポよく話す。",
@@ -771,19 +953,27 @@ const DESIGN_PRESETS = [
 ];
 function dStatus(msg, cls) { const e = $("d-status"); e.innerHTML = msg || ""; e.className = cls || ""; }
 
-function openDesign() {
+// opts: { caption, seed, fromName, suggestName } … 既存の声を元にするときだけ入る
+function openDesign(opts = {}) {
   if (!running) { setStatus("先にサーバを起動してな（右上のボタン）", "err"); return; }
   designSeed = null;
-  $("d-seed").textContent = "";
+  inheritSeed = opts.seed || null;
+  $("d-seed").textContent = inheritSeed ? "引き継ぐ seed " + inheritSeed : "";
   $("d-player").hidden = true;
   $("d-save-row").hidden = true;
   $("d-again").hidden = true;
-  $("d-name").value = "";
+  $("d-cap").value = opts.caption || "";
+  $("d-name").value = opts.suggestName || "";
+  $("d-from").hidden = !opts.fromName;
+  if (opts.fromName) {
+    $("d-from").innerHTML = `「${esc(opts.fromName)}」のプロンプトを元にしてるで。書き替えて 🎲 を押したら<b>別の声として</b>作れる。元の声はそのまま残るから安心してや。`;
+  }
+  setTryLabel();
   dStatus("");
   $("dmodal").hidden = false;
   setTimeout(() => $("d-cap").focus(), 50);
 }
-$("design-btn").addEventListener("click", openDesign);
+$("design-btn").addEventListener("click", () => openDesign());
 $("d-close").addEventListener("click", () => { $("dmodal").hidden = true; $("d-player").pause(); });
 
 // プリセットのチップ
@@ -835,8 +1025,8 @@ async function runDesignTry(seed) {
   }
   $("d-try").disabled = false; $("d-again").disabled = false; $("d-save").disabled = false;
 }
-$("d-try").addEventListener("click", () => runDesignTry(null));
-$("d-again").addEventListener("click", () => runDesignTry(null));
+$("d-try").addEventListener("click", () => { const s = inheritSeed; inheritSeed = null; setTryLabel(); runDesignTry(s); });
+$("d-again").addEventListener("click", () => { inheritSeed = null; setTryLabel(); runDesignTry(null); });
 
 // 気に入った声を、参照クリップを持つ普通の話者として登録する
 $("d-save").addEventListener("click", async () => {
