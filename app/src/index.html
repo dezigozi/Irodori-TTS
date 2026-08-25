@@ -398,6 +398,20 @@ async function api(method, path, body) {
   return j;
 }
 
+// 確認ダイアログ。dialog プラグイン v2.7 で confirm コマンドが message に統合されたので
+// plugin:dialog|confirm は存在せず reject する（→ボタンが無反応に見える）。message を直接叩く。
+async function askConfirm(message) {
+  try {
+    const r = await invoke("plugin:dialog|message", {
+      message, title: "いろとりスタジオ", kind: "warning", buttons: "OkCancel",
+    });
+    return r === "Ok" || r === "Yes" || r === true;
+  } catch (e) {
+    setStatus("確認ダイアログが出せへん: " + e, "err");
+    return false;
+  }
+}
+
 /* ===== サーバ状態 ===== */
 async function refreshServer() {
   const st = await invoke("server_status");
@@ -540,7 +554,7 @@ $("n-ok").addEventListener("click", async () => {
 });
 
 async function delSpeaker(s) {
-  const yes = await invoke("plugin:dialog|confirm", { message: `「${s.name}」を声のデータベースから削除する？\n参照クリップも消えるで。`, title: "いろとりスタジオ", kind: "warning" });
+  const yes = await askConfirm(`「${s.name}」を声のデータベースから削除する？\n参照クリップも消えるで。`);
   if (!yes) return;
   try { await api("DELETE", "/speakers/" + encodeURIComponent(s.id)); setStatus(`「${s.name}」を削除したで`, "ok"); await loadSpeakers(); }
   catch (e) { setStatus("削除失敗: " + e, "err"); }
@@ -1210,7 +1224,7 @@ async function loadOutputs() {
       const a = e.target.dataset.a;
       if (a === "reveal") { invoke("reveal", { path: f.path }); return; }
       if (a === "del") {
-        const yes = await invoke("plugin:dialog|confirm", { message: `${f.name} を削除する？`, title: "いろとりスタジオ", kind: "warning" });
+        const yes = await askConfirm(`${f.name} を削除する？`);
         if (yes) { try { await invoke("delete_file", { path: f.path }); await loadOutputs(); } catch (err) { setStatus(String(err), "err"); } }
         return;
       }
