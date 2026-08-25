@@ -144,7 +144,7 @@
   .ai-tips b { color: #7a5bbf; }
 
   /* モーダル */
-  #modal, #dmodal, #hmodal, #amodal, #pmodal { position: fixed; inset: 0; background: rgba(60,70,110,.45); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  #modal, #dmodal, #hmodal, #amodal, #pmodal, #nmodal { position: fixed; inset: 0; background: rgba(60,70,110,.45); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 10; }
   .dialog { background: #fff; border-radius: 18px; padding: 20px 22px; width: 440px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
   .dialog h3 { font-size: 15px; }
   .dialog .path { font-size: 11.5px; color: #8a90a0; word-break: break-all; }
@@ -349,6 +349,20 @@
   </div>
 </div>
 
+<!-- 名前を変える -->
+<div id="nmodal" hidden>
+  <div class="dialog">
+    <h3>✏️ 名前を変える</h3>
+    <div class="path" id="n-old"></div>
+    <input type="text" id="n-name" placeholder="新しい名前" maxlength="40">
+    <div id="n-status" style="font-size:12.5px;color:#6b7180;min-height:18px"></div>
+    <div class="actions">
+      <button id="n-cancel" class="btn btn-sub">やめる</button>
+      <button id="n-ok" class="btn btn-primary" style="font-size:13px;padding:9px 20px">この名前にする</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const { invoke, convertFileSrc } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -472,6 +486,7 @@ function openSpkMenu(btn, s) {
     }));
   }
   if (s.id !== settings.speaker) add("🎧 この声を選ぶ", "", () => { settings.speaker = s.id; persist(); renderSpeakers(); });
+  add("✏️ 名前を変える", "", () => openRename(s));
   if (!s.protected) {
     const sep = document.createElement("div"); sep.className = "sep"; el.appendChild(sep);
     add("🗑 この声を削除", "danger", () => delSpeaker(s));
@@ -489,6 +504,40 @@ function openSpkMenu(btn, s) {
 }
 window.addEventListener("resize", closeSpkMenu);
 document.querySelector(".view").addEventListener("scroll", closeSpkMenu);
+
+/* ===== 名前を変える（表示名だけ・声そのものは焼き直さん） ===== */
+let renameTarget = null;
+function openRename(s) {
+  renameTarget = s;
+  $("n-old").textContent = `いまの名前: ${s.name}`;
+  $("n-name").value = s.name;
+  $("n-status").textContent = ""; $("n-status").className = "";
+  $("n-ok").disabled = false; $("n-cancel").disabled = false;
+  $("nmodal").hidden = false;
+  setTimeout(() => { $("n-name").focus(); $("n-name").select(); }, 50);
+}
+$("n-cancel").addEventListener("click", () => { $("nmodal").hidden = true; renameTarget = null; });
+$("n-name").addEventListener("keydown", e => { if (e.key === "Enter") $("n-ok").click(); });
+$("n-ok").addEventListener("click", async () => {
+  const s = renameTarget;
+  const name = $("n-name").value.trim();
+  if (!s) return;
+  if (!name) { $("n-status").textContent = "名前を入れてな"; $("n-status").className = "err"; return; }
+  if (name === s.name) { $("nmodal").hidden = true; renameTarget = null; return; }
+  $("n-ok").disabled = true; $("n-cancel").disabled = true;
+  $("n-status").innerHTML = '<span class="spin"></span> 名前を変えてるで…';
+  $("n-status").className = "";
+  try {
+    await api("PATCH", "/speakers/" + encodeURIComponent(s.id), { name });
+    $("nmodal").hidden = true;
+    renameTarget = null;
+    await loadSpeakers();
+    setStatus(`「${s.name}」を「${name}」にしたで！（声そのものは変わってへん）`, "ok");
+  } catch (e) {
+    $("n-status").textContent = "名前変更に失敗: " + e; $("n-status").className = "err";
+    $("n-ok").disabled = false; $("n-cancel").disabled = false;
+  }
+});
 
 async function delSpeaker(s) {
   const yes = await invoke("plugin:dialog|confirm", { message: `「${s.name}」を声のデータベースから削除する？\n参照クリップも消えるで。`, title: "いろとりスタジオ", kind: "warning" });

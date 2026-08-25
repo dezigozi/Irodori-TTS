@@ -7,6 +7,7 @@ Gradio を経由せずにモデルを常駐させ、参照音声の latent を�
   GET  /version          -> {"version": "...", "device": "mps", "checkpoint": "...", "sample_rate": 22050}
   GET  /speakers         -> [{"id": "takataka", "name": "たかたか（本人）", "clips": 3, ...}]
   POST /speakers         -> 声の元ファイルから新しい話者を作る {name, source_path, clip_seconds?, max_clips?}
+  PATCH  /speakers/<id>  -> 話者の表示名だけ変える {name}（音声・latent は焼き直さない）
   DELETE /speakers/<id>  -> 話者を消す（参照wav・latent も消す。takataka は保護）
   POST /synthesis        -> 22050Hz/モノラル/16bit の WAV バイト列を返す（econte 互換）
                             {speaker, text, expression, rate, take?, caption?, sample_rate?}
@@ -471,6 +472,27 @@ class SynthServer:
                 p.unlink()
                 log.info("削除: %s", p)
 
+    def rename_speaker(self, spk_id: str, new_name: str) -> dict:
+        # 表示名を差し替えるだけ。参照クリップも latent も触らんので焼き直しは要らん。
+        name = str(new_name or "").strip()
+        if not name:
+            raise ValueError("name（表示名）が空です")
+        if len(name) > 40:
+            raise ValueError("name（表示名）は40文字までにしてください")
+        with self.cfg_lock:
+            cfg_all = dict(load_speaker_config())
+            if spk_id not in cfg_all:
+                raise ValueError(f"知らない話者です: {spk_id}")
+            old = str(cfg_all[spk_id].get("name") or spk_id)
+            cfg_all[spk_id] = {**cfg_all[spk_id], "name": name}
+            save_speaker_config(cfg_all)
+            spk = self.speakers.get(spk_id)
+            if spk is not None:
+                spk.name = name
+        log.info("話者の名前を変更: %s（%s → %s）", spk_id, old, name)
+        spk = self.speakers.get(spk_id)
+        return spk.to_public() if spk is not None else {"id": spk_id, "name": name}
+
     def delete_speaker(self, spk_id: str) -> dict:
         if spk_id in PROTECTED_SPEAKERS:
             raise ValueError(f"{spk_id} は保護されている話者なので消せません")
@@ -874,7 +896,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):  # noqa: N802  Tauri の webview から fetch するための CORS 前飛行
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
@@ -884,7 +906,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(
                 200,
                 {
-                    "version": "0.3.0",
+                    "version": "0.3.1",
                     "engine": "irodori-tts",
                     "device": self.synth.device,
                     "checkpoint": self.synth.checkpoint,
@@ -906,6 +928,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, self.synth.get_job(path[len("/jobs/"):]).to_public())
             except ValueError as e:
                 self._send_json(404, {"error": str(e)})
+            return
+        self._send_json(404, {"error": f"知らないパスです: {path}"})
+
+    def do_PATCH(self):  # noqa: N802
+        path = self._path()
+        if path.startswith("/speakers/"):
+            params = self._read_json()
+            if params is None:
+                return
+            try:
+                # _path() が既に unquote 済みなので、ここでは切り出すだけ（DELETE と同じ作法）
+                self._send_json(
+                    200,
+                    self.synth.rename_speaker(path[len("/speakers/"):], params.get("name", "")),
+                )
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+            except Exception as e:
+                log.exception("話者の名前変更に失敗")
+                self._send_json(500, {"error": f"話者の名前変更に失敗しました: {e}"})
             return
         self._send_json(404, {"error": f"知らないパスです: {path}"})
 
