@@ -226,3 +226,6 @@ outputs/
 # 声のデータベースの中身（ローカル資産。名前・caption・seed が入る）。
 # 無ければ server.py の DEFAULT_SPEAKERS が使われる
 speakers.json
+
+# フォルダ（グループ）の並び順。speakers.json と同じくローカル資産
+groups.json

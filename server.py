@@ -54,6 +54,9 @@ from irodori_tts.inference_runtime import (
 
 REPO_ROOT = Path(__file__).resolve().parent
 SPEAKERS_JSON = REPO_ROOT / "speakers.json"
+# フォルダ（グループ）の並び順と、声が1人もおらん空フォルダを覚えとくファイル。
+# 声に書いた group が所属の情報源やけど、それだけやと「空のフォルダ」が作れへんのでこっちで持つ
+GROUPS_JSON = REPO_ROOT / "groups.json"
 REFS_DIR = REPO_ROOT / "refs"
 LATENT_DIR = REFS_DIR / ".latents"
 
@@ -115,6 +118,8 @@ class Speaker:
     # 声デザインで作った話者だけ入る。同じ声をもう一度作り直すための種
     caption: str | None = None
     seed: int | None = None
+    # 声が増えてきたときの仕分け用。1声=1グループ（フォルダ分け）。空文字＝未分類
+    group: str = ""
 
     def to_public(self) -> dict:
         # 先頭3つは econte が読む形。あとはスタジオ向けの追加情報（足すだけで形は崩さない）
@@ -130,6 +135,7 @@ class Speaker:
             "caption": self.caption,
             # JS の Number では 2^53 を超えると精度が落ちるので必ず文字列で返す
             "seed": None if self.seed is None else str(self.seed),
+            "group": self.group,
         }
 
 
@@ -180,6 +186,45 @@ def save_speaker_config(cfg: dict) -> None:
     tmp = SPEAKERS_JSON.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, SPEAKERS_JSON)
+
+
+def load_group_list() -> list[str]:
+    """フォルダの並び順。壊れてても落とさへん（フォルダは飾りなので声より優先度が低い）。"""
+    if not GROUPS_JSON.exists():
+        return []
+    try:
+        raw = json.loads(GROUPS_JSON.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning("groups.json が読めません（並び順は声から作り直します）: %s", e)
+        return []
+    if not isinstance(raw, list):
+        log.warning("groups.json がリストではありません。無視します")
+        return []
+    out: list[str] = []
+    for g in raw:
+        name = str(g or "").strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def save_group_list(groups: list[str]) -> None:
+    tmp = GROUPS_JSON.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(groups, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, GROUPS_JSON)
+
+
+def merged_groups(cfg_all: dict) -> list[str]:
+    """保存された並び順 ＋ 声に書いてあるけど並び順に無いフォルダ（自己修復）。
+
+    groups.json を消しても・手で speakers.json を直しても、フォルダが消えたように見えへん。
+    """
+    out = load_group_list()
+    for spk in cfg_all.values():
+        g = str(spk.get("group") or "").strip()
+        if g and g not in out:
+            out.append(g)
+    return out
 
 
 def _clip_fingerprint(clips: list[Path]) -> str:
@@ -400,6 +445,7 @@ class SynthServer:
             created_at=cfg.get("created_at"),
             caption=cfg.get("caption"),
             seed=cfg.get("seed"),
+            group=str(cfg.get("group") or ""),
         )
 
     def _prepare_speakers(self) -> None:
@@ -478,26 +524,157 @@ class SynthServer:
                 p.unlink()
                 log.info("削除: %s", p)
 
-    def rename_speaker(self, spk_id: str, new_name: str) -> dict:
-        # 表示名を差し替えるだけ。参照クリップも latent も触らんので焼き直しは要らん。
-        name = str(new_name or "").strip()
+    def reorder_speakers(self, ids: list) -> list[str]:
+        """声の並び順を変える。**speakers.json のキー順が表示順**という既存の約束はそのまま。
+
+        渡された ids は「並べ替えたい範囲（＝フォルダ1個ぶん）」だけでええ。
+        その ids がいま占めてる位置（スロット）に、渡された順で入れ直す＝他の声は動かへん。
+        知らん id は黙って捨てる（一覧が古いクライアントから来ても壊れへん）。
+        """
+        if not isinstance(ids, list):
+            raise ValueError("ids は配列で渡してください")
+        with self.cfg_lock:
+            cfg_all = load_speaker_config()
+            keys = list(cfg_all.keys())
+            wanted: list[str] = []
+            for i in ids:
+                sid = str(i)
+                if sid in cfg_all and sid not in wanted:
+                    wanted.append(sid)
+            if len(wanted) < 2:
+                return keys  # 1個以下なら並べ替える余地がない
+            target = set(wanted)
+            slots = [idx for idx, k in enumerate(keys) if k in target]
+            new_keys = list(keys)
+            for slot, sid in zip(slots, wanted):
+                new_keys[slot] = sid
+            if new_keys == keys:
+                return keys
+            save_speaker_config({k: cfg_all[k] for k in new_keys})
+            # メモリ側の並びも揃える（GET /speakers はこの dict の順で返す）
+            self.speakers = {k: self.speakers[k] for k in new_keys if k in self.speakers}
+        log.info("声の並び順を変更: %s", " → ".join(wanted))
+        return new_keys
+
+    # ---------------- フォルダ（グループ） ----------------
+
+    def list_groups(self) -> list[str]:
+        with self.cfg_lock:
+            return merged_groups(load_speaker_config())
+
+    @staticmethod
+    def _check_group_name(name: str) -> str:
+        name = str(name or "").strip()
         if not name:
-            raise ValueError("name（表示名）が空です")
-        if len(name) > 40:
-            raise ValueError("name（表示名）は40文字までにしてください")
+            raise ValueError("フォルダ名が空です")
+        if len(name) > 24:
+            raise ValueError("フォルダ名は24文字までにしてください")
+        return name
+
+    def add_group(self, name: str) -> list[str]:
+        name = self._check_group_name(name)
+        with self.cfg_lock:
+            groups = merged_groups(load_speaker_config())
+            if name in groups:
+                raise ValueError(f"「{name}」はもうあります")
+            groups.append(name)
+            save_group_list(groups)
+        log.info("フォルダを追加: %s", name)
+        return groups
+
+    def rename_group(self, old_name: str, new_name: str) -> list[str]:
+        """フォルダ名を変える。中の声の group も全部まとめて書き換える（所属の情報源は声側なので）。"""
+        new_name = self._check_group_name(new_name)
+        old_name = str(old_name or "").strip()
+        with self.cfg_lock:
+            cfg_all = dict(load_speaker_config())
+            groups = merged_groups(cfg_all)
+            if old_name not in groups:
+                raise ValueError(f"知らないフォルダです: {old_name}")
+            if new_name != old_name and new_name in groups:
+                raise ValueError(f"「{new_name}」はもうあります")
+            moved = 0
+            for spk_id, spk in cfg_all.items():
+                if str(spk.get("group") or "").strip() == old_name:
+                    cfg_all[spk_id] = {**spk, "group": new_name}
+                    moved += 1
+            if moved:
+                save_speaker_config(cfg_all)
+            groups = [new_name if g == old_name else g for g in groups]
+            save_group_list(groups)
+            for spk in self.speakers.values():
+                if spk.group == old_name:
+                    spk.group = new_name
+        log.info("フォルダの名前を変更: %s → %s（声 %d 人ぶん）", old_name, new_name, moved)
+        return groups
+
+    def delete_group(self, name: str) -> list[str]:
+        """フォルダを消す。中の声は消さず、未分類（group="")に戻すだけ。"""
+        name = str(name or "").strip()
+        with self.cfg_lock:
+            cfg_all = dict(load_speaker_config())
+            groups = merged_groups(cfg_all)
+            if name not in groups:
+                raise ValueError(f"知らないフォルダです: {name}")
+            freed = 0
+            for spk_id, spk in cfg_all.items():
+                if str(spk.get("group") or "").strip() == name:
+                    cfg_all[spk_id] = {**spk, "group": ""}
+                    freed += 1
+            if freed:
+                save_speaker_config(cfg_all)
+            groups = [g for g in groups if g != name]
+            save_group_list(groups)
+            for spk in self.speakers.values():
+                if spk.group == name:
+                    spk.group = ""
+        log.info("フォルダを削除: %s（声 %d 人を未分類に戻した）", name, freed)
+        return groups
+
+    def update_speaker(self, spk_id: str, params: dict) -> dict:
+        """表示名とグループを差し替える。参照クリップも latent も触らんので焼き直しは要らん。
+
+        name / group のうち渡されたキーだけを更新する（片方だけの PATCH ができる）。
+        """
+        patch: dict = {}
+        if "name" in params:
+            name = str(params.get("name") or "").strip()
+            if not name:
+                raise ValueError("name（表示名）が空です")
+            if len(name) > 40:
+                raise ValueError("name（表示名）は40文字までにしてください")
+            patch["name"] = name
+        if "group" in params:
+            # 空文字＝未分類に戻す。グループそのものの実体は持たず、話者に書いた名前が唯一の情報源
+            group = str(params.get("group") or "").strip()
+            if len(group) > 24:
+                raise ValueError("group（グループ名）は24文字までにしてください")
+            patch["group"] = group
+        if not patch:
+            raise ValueError("name か group のどちらかを渡してください")
+
         with self.cfg_lock:
             cfg_all = dict(load_speaker_config())
             if spk_id not in cfg_all:
                 raise ValueError(f"知らない話者です: {spk_id}")
-            old = str(cfg_all[spk_id].get("name") or spk_id)
-            cfg_all[spk_id] = {**cfg_all[spk_id], "name": name}
+            before = str(cfg_all[spk_id].get("name") or spk_id)
+            cfg_all[spk_id] = {**cfg_all[spk_id], **patch}
             save_speaker_config(cfg_all)
             spk = self.speakers.get(spk_id)
             if spk is not None:
-                spk.name = name
-        log.info("話者の名前を変更: %s（%s → %s）", spk_id, old, name)
+                if "name" in patch:
+                    spk.name = patch["name"]
+                if "group" in patch:
+                    spk.group = patch["group"]
+            # 知らんフォルダに入れられたら並び順にも足す（UIから新規フォルダへ直接移せる）
+            g = patch.get("group", "")
+            if g:
+                groups = merged_groups(cfg_all)
+                if g not in load_group_list():
+                    save_group_list(groups)
+        log.info("話者を更新: %s（%s）%s", spk_id, before, patch)
         spk = self.speakers.get(spk_id)
-        return spk.to_public() if spk is not None else {"id": spk_id, "name": name}
+        return spk.to_public() if spk is not None else {"id": spk_id, **patch}
 
     def delete_speaker(self, spk_id: str) -> dict:
         if spk_id in PROTECTED_SPEAKERS:
@@ -936,7 +1113,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(
                 200,
                 {
-                    "version": "0.3.2",
+                    "version": "0.4.1",
                     "engine": "irodori-tts",
                     "device": self.synth.device,
                     "checkpoint": self.synth.checkpoint,
@@ -953,6 +1130,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/speakers":
             self._send_json(200, [s.to_public() for s in self.synth.speakers.values()])
             return
+        if path == "/groups":
+            self._send_json(200, self.synth.list_groups())
+            return
         if path.startswith("/jobs/"):
             try:
                 self._send_json(200, self.synth.get_job(path[len("/jobs/"):]).to_public())
@@ -963,26 +1143,47 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PATCH(self):  # noqa: N802
         path = self._path()
+        if path.startswith("/groups/"):
+            params = self._read_json()
+            if params is None:
+                return
+            try:
+                self._send_json(
+                    200,
+                    self.synth.rename_group(path[len("/groups/"):], params.get("name", "")),
+                )
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+            except Exception as e:
+                log.exception("フォルダの名前変更に失敗")
+                self._send_json(500, {"error": f"フォルダの名前変更に失敗しました: {e}"})
+            return
         if path.startswith("/speakers/"):
             params = self._read_json()
             if params is None:
                 return
             try:
                 # _path() が既に unquote 済みなので、ここでは切り出すだけ（DELETE と同じ作法）
-                self._send_json(
-                    200,
-                    self.synth.rename_speaker(path[len("/speakers/"):], params.get("name", "")),
-                )
+                self._send_json(200, self.synth.update_speaker(path[len("/speakers/"):], params))
             except ValueError as e:
                 self._send_json(400, {"error": str(e)})
             except Exception as e:
-                log.exception("話者の名前変更に失敗")
-                self._send_json(500, {"error": f"話者の名前変更に失敗しました: {e}"})
+                log.exception("話者の更新に失敗")
+                self._send_json(500, {"error": f"話者の更新に失敗しました: {e}"})
             return
         self._send_json(404, {"error": f"知らないパスです: {path}"})
 
     def do_DELETE(self):  # noqa: N802
         path = self._path()
+        if path.startswith("/groups/"):
+            try:
+                self._send_json(200, self.synth.delete_group(path[len("/groups/"):]))
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+            except Exception as e:
+                log.exception("フォルダの削除に失敗")
+                self._send_json(500, {"error": f"フォルダの削除に失敗しました: {e}"})
+            return
         if path.startswith("/speakers/"):
             try:
                 self._send_json(200, self.synth.delete_speaker(path[len("/speakers/"):]))
@@ -1028,6 +1229,32 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 log.exception("話者の追加に失敗")
                 self._send_json(500, {"error": f"話者の追加に失敗しました: {e}"})
+            return
+
+        if path == "/speakers/order":
+            params = self._read_json()
+            if params is None:
+                return
+            try:
+                self._send_json(200, self.synth.reorder_speakers(params.get("ids", [])))
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+            except Exception as e:
+                log.exception("並び順の変更に失敗")
+                self._send_json(500, {"error": f"並び順の変更に失敗しました: {e}"})
+            return
+
+        if path == "/groups":
+            params = self._read_json()
+            if params is None:
+                return
+            try:
+                self._send_json(200, self.synth.add_group(params.get("name", "")))
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+            except Exception as e:
+                log.exception("フォルダの追加に失敗")
+                self._send_json(500, {"error": f"フォルダの追加に失敗しました: {e}"})
             return
 
         if path == "/design":
@@ -1097,6 +1324,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Irodori-TTS の常駐HTTPサーバ")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=3952)
+    ap.add_argument("--log-level", default="INFO", help="INFO / DEBUG（DEBUGはリクエストも出る）")
     ap.add_argument("--checkpoint", default="Aratako/Irodori-TTS-v4.1-Small")
     ap.add_argument("--device", default=None, help="既定は自動検出（Macなら mps）")
     ap.add_argument("--codec-repo", default=None)
@@ -1109,7 +1337,8 @@ def main() -> None:
     args = ap.parse_args()
 
     logging.basicConfig(
-        level=logging.INFO,
+        # DEBUG にするとリクエスト1本ずつがログに出る（どのAPIを叩かれてるかの確認用）
+        level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )

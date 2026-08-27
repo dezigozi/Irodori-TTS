@@ -47,6 +47,34 @@
   .spk .sub { font-size: 11px; color: #8a90a0; }
   .spk .dots { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; padding: 0; font-size: 14px; line-height: 1; letter-spacing: 1px; color: #a4aab8; background: transparent; border: none; border-radius: 8px; cursor: pointer; font-family: inherit; opacity: .5; transition: opacity .15s, background .15s; }
   .spk:hover .dots, .spk .dots.on { opacity: 1; color: #7a5bbf; background: rgba(176,109,255,.14); }
+  /* グループ（フォルダ分け）。1声=1グループで、話者に書いたグループ名が唯一の情報源 */
+  #spk-list { flex-direction: column; flex-wrap: nowrap; }
+  .spk-group { width: 100%; }
+  .spk-group-head { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 800; color: #7a5bbf; margin: 2px 0 7px; }
+  .spk-group-head .n { font-weight: 600; color: #a4aab8; }
+  .spk-group-head.none { color: #a4aab8; }
+  .spk-group-body { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+  .spk-group:last-child .spk-group-body { margin-bottom: 0; }
+  #spk-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  #spk-filter button { font-family: inherit; font-size: 11.5px; font-weight: 700; padding: 4px 11px; border-radius: 999px; border: 1.5px solid #e3e7f0; background: #fff; color: #8a90a0; cursor: pointer; }
+  #spk-filter button.on { border-color: #b06dff; background: rgba(176,109,255,.12); color: #7a5bbf; }
+  .spk-group-head .dots { margin-left: auto; width: 20px; height: 20px; padding: 0; font-size: 13px; line-height: 1; color: #a4aab8; background: transparent; border: none; border-radius: 7px; cursor: pointer; font-family: inherit; opacity: .45; transition: opacity .15s, background .15s; }
+  .spk-group:hover .spk-group-head .dots, .spk-group-head .dots.on { opacity: 1; color: #7a5bbf; background: rgba(176,109,255,.14); }
+  #spk-newfolder { font-family: inherit; font-size: 11.5px; font-weight: 700; padding: 4px 11px; border-radius: 999px; border: 1.5px dashed #d7dbe6; background: transparent; color: #8a90a0; cursor: pointer; }
+  #spk-newfolder:hover { border-color: #b06dff; color: #7a5bbf; }
+  /* ドラッグでフォルダ間を移動。
+     Tauri の dragDropEnabled=true が WebView の HTML5 drag&drop を横取りしてまう
+     （声ファイルのドロップに native の tauri://drag-drop が要るので切られへん）ので、
+     カードの移動は pointer イベントで自前に実装しとる */
+  .spk { cursor: grab; user-select: none; }
+  .spk.dragging { opacity: .35; }
+  /* 落とす位置を示す縦線。実DOMに差し込むので位置計算が要らん（flexの並びがそのまま答え） */
+  .spk-drop-line { width: 3px; align-self: stretch; min-height: 56px; border-radius: 2px; background: #b06dff; box-shadow: 0 0 0 3px rgba(176,109,255,.18); }
+  .spk-ghost { position: fixed; z-index: 40; pointer-events: none; opacity: .92; transform: translate(-50%, -50%) rotate(-2deg); box-shadow: 0 12px 30px rgba(60,70,110,.28); }
+  .spk-group.drop-over .spk-group-body { background: rgba(176,109,255,.09); border-radius: 12px; outline: 2px dashed #b06dff; outline-offset: 3px; }
+  .spk-group-body.empty { min-height: 56px; border: 1.5px dashed #e3e7f0; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 11.5px; color: #a4aab8; }
+  .spk .grp { font-size: 10.5px; font-weight: 700; color: #7a5bbf; background: rgba(176,109,255,.12); border-radius: 999px; padding: 1px 7px; margin-left: 5px; }
+
   #spk-menu { position: fixed; z-index: 20; background: #fff; border: 1px solid #e3e7f0; border-radius: 12px; padding: 5px; box-shadow: 0 10px 30px rgba(60,70,110,.18); display: flex; flex-direction: column; gap: 2px; min-width: 218px; }
   #spk-menu button { font-family: inherit; font-size: 12.5px; font-weight: 600; text-align: left; padding: 8px 10px; border: none; background: transparent; color: #5a6274; border-radius: 8px; cursor: pointer; white-space: nowrap; }
   #spk-menu button:hover { background: rgba(176,109,255,.10); color: #7a5bbf; }
@@ -144,7 +172,7 @@
   .ai-tips b { color: #7a5bbf; }
 
   /* モーダル */
-  #modal, #dmodal, #hmodal, #amodal, #pmodal, #nmodal { position: fixed; inset: 0; background: rgba(60,70,110,.45); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  #modal, #dmodal, #hmodal, #amodal, #pmodal, #nmodal, #gmodal, #fmodal { position: fixed; inset: 0; background: rgba(60,70,110,.45); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 10; }
   .dialog { background: #fff; border-radius: 18px; padding: 20px 22px; width: 440px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
   .dialog h3 { font-size: 15px; }
   .dialog .path { font-size: 11.5px; color: #8a90a0; word-break: break-all; }
@@ -169,7 +197,11 @@
   <section class="card">
     <h2>🎤 声のデータベース <small id="spk-count"></small></h2>
     <div class="spk-row">
-      <div id="spk-list"></div>
+      <div style="flex:1;min-width:0">
+        <div id="spk-filter"></div>
+        <div style="display:flex;gap:6px;margin-bottom:10px"><button id="spk-newfolder">＋ フォルダを作る</button></div>
+        <div id="spk-list"></div>
+      </div>
       <div class="drop-col">
         <div id="drop">
           <div class="big">🎧</div>
@@ -350,6 +382,33 @@
 </div>
 
 <!-- 名前を変える -->
+<div id="fmodal" hidden>
+  <div class="dialog">
+    <h3 id="f-title">📁 フォルダ</h3>
+    <div class="path" id="f-note"></div>
+    <input type="text" id="f-name" placeholder="フォルダ名" maxlength="24">
+    <div id="f-status" style="font-size:12.5px;color:#6b7180;min-height:18px"></div>
+    <div class="actions">
+      <button id="f-cancel" class="btn btn-sub">やめる</button>
+      <button id="f-ok" class="btn btn-primary" style="font-size:13px;padding:9px 20px">決定</button>
+    </div>
+  </div>
+</div>
+
+<div id="gmodal" hidden>
+  <div class="dialog">
+    <h3>📁 グループを変える</h3>
+    <div class="path" id="g-old"></div>
+    <input type="text" id="g-name" list="g-list" placeholder="グループ名（空にすると未分類）" maxlength="24">
+    <datalist id="g-list"></datalist>
+    <div id="g-status" style="font-size:12.5px;color:#6b7180;min-height:18px"></div>
+    <div class="actions">
+      <button id="g-cancel" class="btn btn-sub">やめる</button>
+      <button id="g-ok" class="btn btn-primary" style="font-size:13px;padding:9px 20px">このグループにする</button>
+    </div>
+  </div>
+</div>
+
 <div id="nmodal" hidden>
   <div class="dialog">
     <h3>✏️ 名前を変える</h3>
@@ -420,7 +479,8 @@ async function refreshServer() {
   pill.className = "pill " + (running ? "on" : "off");
   $("srv-text").textContent = running ? `いろとりTTS 稼働中（${st.device}）` : "いろとりTTS 未起動";
   $("srv-btn").hidden = running;
-  if (running) await loadSpeakers();
+  // ドラッグ中に描き直すと掴んでるカードが消えて操作が飛ぶ
+  if (running && !dragging) await loadSpeakers();
   return running;
 }
 $("srv-btn").addEventListener("click", async () => {
@@ -432,37 +492,125 @@ $("srv-btn").addEventListener("click", async () => {
 });
 
 /* ===== 話者 ===== */
+let groups = [];      // フォルダの並び順（サーバが持つ。空フォルダもここに残る）
+let dragging = null;  // ドラッグ中の話者id。掴んでる間は自動更新で描き直さへん
+
 async function loadSpeakers() {
   try { speakers = await api("GET", "/speakers"); }
   catch (e) { setStatus("話者一覧が取れへん: " + e, "err"); speakers = []; }
+  // フォルダ一覧は取れへんでも致命的やない（声に書いてある group から作り直せる）
+  try { groups = await api("GET", "/groups"); }
+  catch (e) { console.warn("フォルダ一覧が取れへんかった", e); groups = []; }
   renderSpeakers();
+}
+const NO_GROUP = "未分類";
+/** フォルダ名の一覧。サーバの並び順が正で、声にだけ書いてあるフォルダを後ろに足す（未分類は含めへん） */
+function groupNames() {
+  const out = groups.slice();
+  for (const s of speakers) {
+    const g = (s.group || "").trim();
+    if (g && !out.includes(g)) out.push(g);
+  }
+  return out;
+}
+/** グループ絞り込み。"" = すべて。消えたグループを選んだままにせん */
+function activeFilter() {
+  const f = settings.spkFilter || "";
+  if (!f) return "";
+  if (f === NO_GROUP) return speakers.some(s => !(s.group || "").trim()) ? f : "";
+  return groupNames().includes(f) ? f : "";
+}
+function renderSpkFilter() {
+  const bar = $("spk-filter"); bar.innerHTML = "";
+  const groups = groupNames();
+  const hasNone = speakers.some(s => !(s.group || "").trim());
+  // グループが1つも無いうちはチップ自体を出さへん（増えてから出る）
+  if (!groups.length) return;
+  const chips = [["", `すべて（${speakers.length}）`]];
+  for (const g of groups) chips.push([g, `${g}（${speakers.filter(s => (s.group || "").trim() === g).length}）`]);
+  if (hasNone) chips.push([NO_GROUP, `${NO_GROUP}（${speakers.filter(s => !(s.group || "").trim()).length}）`]);
+  const cur = activeFilter();
+  for (const [val, label] of chips) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (val === cur) b.className = "on";
+    b.addEventListener("click", () => { settings.spkFilter = val; persist(); renderSpeakers(); });
+    bar.appendChild(b);
+  }
+}
+function spkCard(s) {
+  const card = document.createElement("div");
+  card.className = "spk" + (s.id === settings.speaker ? " active" : "");
+  card.dataset.id = s.id;
+  card.addEventListener("pointerdown", e => startCardDrag(e, card, s));
+  card.innerHTML = `<div class="avatar" style="background:${colorOf(s.id)}">${s.name.slice(0,1)}</div>
+    <div class="meta"><div class="name">${esc(s.name)}${s.designed ? '<span class="tag">デザイン</span>' : ""}</div><div class="sub" title="${esc(s.caption || "")}">参照クリップ ${s.clips}本${s.created_at ? " ・ " + fmtTime(s.created_at) : ""}</div></div>
+    <button class="dots" title="この声のメニュー（グループ・プロンプト・削除）">⋯</button>`;
+  card.addEventListener("click", e => {
+    if (e.target.classList.contains("dots")) return;
+    if (justDragged) return; // 動かした直後のクリックは選択やなくドラッグの余韻
+    settings.speaker = s.id; persist(); renderSpeakers();
+  });
+  card.querySelector(".dots").addEventListener("click", e => {
+    e.stopPropagation();
+    openSpkMenu(e.currentTarget, s);
+  });
+  return card;
 }
 function renderSpeakers() {
   closeSpkMenu();  // 15秒ごとの自動更新で描き直されると ⋯ メニューが宙に浮くので先に閉じる
   const list = $("spk-list"); list.innerHTML = "";
   $("spk-count").textContent = speakers.length ? `${speakers.length} 人` : "";
+  renderSpkFilter();
   if (!speakers.length) {
     list.innerHTML = `<div style="font-size:12.5px;color:#8a90a0;align-self:center;line-height:1.7">${running ? "声がまだ1人もおらんね。<br>右の「🎨 声をデザインして作る」やったら、<br>人の声が無くても今すぐ作れるで" : "サーバを起動すると声が出てくるで"}</div>`;
   }
   if (!speakers.find(s => s.id === settings.speaker)) settings.speaker = speakers[0]?.id || "";
-  for (const s of speakers) {
-    const card = document.createElement("div");
-    card.className = "spk" + (s.id === settings.speaker ? " active" : "");
-    card.innerHTML = `<div class="avatar" style="background:${colorOf(s.id)}">${s.name.slice(0,1)}</div>
-      <div class="meta"><div class="name">${esc(s.name)}${s.designed ? '<span class="tag">デザイン</span>' : ""}</div><div class="sub" title="${esc(s.caption || "")}">参照クリップ ${s.clips}本${s.created_at ? " ・ " + fmtTime(s.created_at) : ""}</div></div>
-      <button class="dots" title="この声のメニュー（プロンプトを見る・削除）">⋯</button>`;
-    card.addEventListener("click", e => {
-      if (e.target.classList.contains("dots")) return;
-      settings.speaker = s.id; persist(); renderSpeakers();
-    });
-    card.querySelector(".dots").addEventListener("click", e => {
-      e.stopPropagation();
-      openSpkMenu(e.currentTarget, s);
-    });
-    list.appendChild(card);
+
+  // フォルダ順に見出しつきで並べる。空フォルダも枠だけ出す（ドラッグの受け皿になる）。未分類はいちばん下
+  const filter = activeFilter();
+  const buckets = [];
+  for (const g of groupNames()) buckets.push([g, speakers.filter(s => (s.group || "").trim() === g)]);
+  const ungrouped = speakers.filter(s => !(s.group || "").trim());
+  if (ungrouped.length) buckets.push(["", ungrouped]);
+  const showHeads = buckets.length > 1 || (buckets.length === 1 && buckets[0][0]);
+
+  for (const [g, members] of buckets) {
+    if (filter && (filter === NO_GROUP ? g !== "" : g !== filter)) continue;
+    const box = document.createElement("div");
+    box.className = "spk-group";
+    if (showHeads) {
+      const head = document.createElement("div");
+      head.className = "spk-group-head" + (g ? "" : " none");
+      head.innerHTML = `<span>${g ? "📁 " + esc(g) : "📂 " + NO_GROUP}</span> <span class="n">${members.length}</span>`;
+      const dots = document.createElement("button");
+      dots.className = "dots";
+      dots.textContent = "⋯";
+      dots.title = "このフォルダのメニュー";
+      dots.addEventListener("click", e => { e.stopPropagation(); openFolderMenu(e.currentTarget, g); });
+      head.appendChild(dots);
+      box.appendChild(head);
+    }
+    const body = document.createElement("div");
+    body.className = "spk-group-body" + (members.length ? "" : " empty");
+    if (!members.length) body.textContent = "ここに声をドラッグ";
+    for (const s of members) body.appendChild(spkCard(s));
+    box.appendChild(body);
+    box.dataset.group = g; // 落とされた先を elementFromPoint から引くための目印
+    list.appendChild(box);
   }
+
+  // 原稿側の話者セレクトもグループ見出し（optgroup）で束ねる
   const sel = $("speaker"); sel.innerHTML = "";
-  for (const s of speakers) { const o = document.createElement("option"); o.value = s.id; o.textContent = s.name; sel.appendChild(o); }
+  for (const [g, members] of buckets) {
+    const parent = g ? document.createElement("optgroup") : sel;
+    if (g) { parent.label = g; sel.appendChild(parent); }
+    for (const s of members) {
+      const o = document.createElement("option");
+      o.value = s.id; o.textContent = s.name;
+      parent.appendChild(o);
+    }
+  }
   sel.value = settings.speaker;
 }
 $("speaker").addEventListener("change", () => { settings.speaker = $("speaker").value; persist(); renderSpeakers(); });
@@ -501,6 +649,7 @@ function openSpkMenu(btn, s) {
   }
   if (s.id !== settings.speaker) add("🎧 この声を選ぶ", "", () => { settings.speaker = s.id; persist(); renderSpeakers(); });
   add("✏️ 名前を変える", "", () => openRename(s));
+  add("📁 グループを変える", "", () => openGroup(s));
   if (!s.protected) {
     const sep = document.createElement("div"); sep.className = "sep"; el.appendChild(sep);
     add("🗑 この声を削除", "danger", () => delSpeaker(s));
@@ -550,6 +699,279 @@ $("n-ok").addEventListener("click", async () => {
   } catch (e) {
     $("n-status").textContent = "名前変更に失敗: " + e; $("n-status").className = "err";
     $("n-ok").disabled = false; $("n-cancel").disabled = false;
+  }
+});
+
+/* ===== フォルダ（メニュー・追加・改名・削除・ドラッグ移動） ===== */
+
+/* ---- カードのドラッグ（pointer イベントで自前実装） ----
+   Tauri の dragDropEnabled=true が WebView の HTML5 drag&drop を食ってまうので
+   dragstart/drop は飛んでこーへん。掴む→ゴーストを追従→離した所のフォルダへ、を手で組む */
+let justDragged = false;  // 直後の click を選択にせんためのフラグ
+
+function startCardDrag(e, card, s) {
+  if (e.button !== 0) return;                       // 左ボタンだけ
+  if (e.target.classList.contains("dots")) return;  // ⋯ は掴まへん
+  const startX = e.clientX, startY = e.clientY;
+  let ghost = null, overBox = null, line = null;
+
+  const clearOver = () => {
+    document.querySelectorAll(".spk-group.drop-over").forEach(el => el.classList.remove("drop-over"));
+    if (line) { line.remove(); line = null; }
+    overBox = null;
+  };
+
+  /** body の中で、いまのカーソル位置がどのカードの前に入るかを返す（末尾なら null） */
+  const cardBefore = (body, x, y) => {
+    for (const c of body.querySelectorAll(".spk")) {
+      if (c === card) continue; // 自分の位置は基準にせえへん
+      const r = c.getBoundingClientRect();
+      // 行をまたぐ並び（flex-wrap）なので、上の行→左のカード の順で見る
+      if (y < r.top) return c;
+      if (y <= r.bottom && x < r.left + r.width / 2) return c;
+    }
+    return null;
+  };
+
+  const begin = () => {
+    dragging = s.id;
+    closeSpkMenu();
+    card.classList.add("dragging");
+    const r = card.getBoundingClientRect();
+    ghost = card.cloneNode(true);
+    ghost.className = "spk spk-ghost";
+    ghost.style.width = r.width + "px";
+    document.body.appendChild(ghost);
+  };
+
+  const onMove = ev => {
+    if (!ghost) {
+      // 5px 動くまではドラッグ扱いにせえへん（ただのクリックを潰さんため）
+      if (Math.abs(ev.clientX - startX) < 5 && Math.abs(ev.clientY - startY) < 5) return;
+      begin();
+    }
+    ghost.style.left = ev.clientX + "px";
+    ghost.style.top = ev.clientY + "px";
+    // ゴーストは pointer-events:none なので、下にある本物の要素が拾える
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const box = el && el.closest(".spk-group");
+    if (box !== overBox) {
+      clearOver();
+      if (box) {
+        overBox = box;
+        // 別フォルダへ移すときだけ枠を光らせる（同じフォルダ内は並べ替えなので線だけ出す）
+        if ((box.dataset.group || "") !== (s.group || "").trim()) box.classList.add("drop-over");
+        line = document.createElement("div");
+        line.className = "spk-drop-line";
+      }
+    }
+    if (!overBox || !line) return;
+    // 挿入位置の線を、入る場所そのものに差し込む（毎フレーム置き直す）
+    const body = overBox.querySelector(".spk-group-body");
+    if (!body) return;
+    body.classList.remove("empty");
+    const before = cardBefore(body, ev.clientX, ev.clientY);
+    if (before) body.insertBefore(line, before);
+    else body.appendChild(line);
+  };
+
+  const finish = ev => {
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", finish);
+    document.removeEventListener("pointercancel", cancel);
+    card.classList.remove("dragging");
+    if (!ghost) return;                       // 動かしてへん＝ただのクリック
+    const target = overBox;
+    // 線の位置＝落とした先。DOMを消す前に、そのフォルダの新しい並び（id順）を作っておく
+    let order = null, group = null;
+    if (target && line) {
+      group = target.dataset.group || "";
+      const body = target.querySelector(".spk-group-body");
+      order = [];
+      for (const n of body.children) {
+        if (n === line) order.push(s.id);            // 線のところに自分が入る
+        else if (n.classList.contains("spk")) {
+          const id = n.dataset.id;
+          if (id && id !== s.id) order.push(id);     // 元の位置にある自分は飛ばす
+        }
+      }
+    }
+    ghost.remove(); ghost = null;
+    clearOver();
+    dragging = null;
+    justDragged = true;
+    setTimeout(() => { justDragged = false; }, 0);
+    if (order) dropSpeaker(s, group, order);
+  };
+
+  const cancel = () => {
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", finish);
+    document.removeEventListener("pointercancel", cancel);
+    card.classList.remove("dragging");
+    if (ghost) { ghost.remove(); ghost = null; }
+    clearOver();
+    dragging = null;
+  };
+
+  document.addEventListener("pointermove", onMove);
+  document.addEventListener("pointerup", finish);
+  document.addEventListener("pointercancel", cancel);
+}
+
+/** 落とされた声を反映する。フォルダが変わってたら付け替え、そのあと並び順を送る。
+ *  order = 落とした先フォルダの、落としたあとの id 並び */
+async function dropSpeaker(s, group, order) {
+  const from = (s.group || "").trim();
+  const moved = from !== group;
+  // 同じフォルダで並びも変わってへんなら、通信せんと終わる
+  const before = speakers.filter(x => (x.group || "").trim() === group).map(x => x.id);
+  if (!moved && before.join("|") === order.join("|")) return;
+  try {
+    if (moved) await api("PATCH", "/speakers/" + encodeURIComponent(s.id), { group });
+    if (order.length > 1) await api("POST", "/speakers/order", { ids: order });
+    await loadSpeakers();
+    setStatus(
+      moved
+        ? (group ? `「${s.name}」を 📁${group} に移したで！` : `「${s.name}」を${NO_GROUP}に戻したで`)
+        : `「${s.name}」の順番を変えたで`,
+      "ok",
+    );
+  } catch (e) {
+    setStatus((moved ? "移動" : "並べ替え") + "に失敗: " + e, "err");
+    await loadSpeakers(); // 片方だけ通ってる可能性があるので実際の状態に戻す
+  }
+}
+
+/** ⋯メニューからのフォルダ変更（並び順は触らへん） */
+async function moveSpeakerToGroup(spkId, group) {
+  const s = speakers.find(x => x.id === spkId);
+  if (!s) return;
+  if ((s.group || "").trim() === group) return;
+  try {
+    await api("PATCH", "/speakers/" + encodeURIComponent(s.id), { group });
+    await loadSpeakers();
+    setStatus(group ? `「${s.name}」を 📁${group} に移したで！` : `「${s.name}」を${NO_GROUP}に戻したで`, "ok");
+  } catch (e) {
+    setStatus("移動に失敗: " + e, "err");
+  }
+}
+
+/** フォルダ見出しの ⋯ メニュー。声カードの ⋯ と同じ土台（spkMenu）を使い回す */
+function openFolderMenu(btn, group) {
+  const same = spkMenu && spkMenu.btn === btn;
+  closeSpkMenu();
+  if (same) return;
+  const el = document.createElement("div");
+  el.id = "spk-menu";
+  const add = (label, cls, fn) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.addEventListener("click", () => { closeSpkMenu(); fn(); });
+    el.appendChild(b);
+  };
+  add("📁 新しいフォルダを作る", "", () => openFolder(null));
+  if (group) {
+    add("✏️ このフォルダの名前を変える", "", () => openFolder(group));
+    const sep = document.createElement("div"); sep.className = "sep"; el.appendChild(sep);
+    add("🗑 このフォルダを消す（声は残る）", "danger", () => delFolder(group));
+  }
+  document.body.appendChild(el);
+  const r = btn.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)) + "px";
+  el.style.top = (r.bottom + h + 10 > window.innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4) + "px";
+  btn.classList.add("on");
+  spkMenu = { el, btn };
+  document.addEventListener("mousedown", onMenuOutside, true);
+  document.addEventListener("keydown", onMenuKey, true);
+}
+
+/** 追加（target=null）と改名（target=フォルダ名）で同じダイアログを使う */
+let folderTarget = null;
+function openFolder(target) {
+  folderTarget = target;
+  $("f-title").textContent = target ? "✏️ フォルダの名前を変える" : "📁 新しいフォルダを作る";
+  $("f-note").textContent = target
+    ? `いまの名前: ${target}（中の声もまとめて付け替わるで）`
+    : "空のフォルダを作るで。あとから声をドラッグで入れられる";
+  $("f-name").value = target || "";
+  $("f-ok").textContent = target ? "この名前にする" : "作る";
+  $("f-status").textContent = ""; $("f-status").className = "";
+  $("f-ok").disabled = false; $("f-cancel").disabled = false;
+  $("fmodal").hidden = false;
+  setTimeout(() => { $("f-name").focus(); $("f-name").select(); }, 50);
+}
+$("spk-newfolder").addEventListener("click", () => openFolder(null));
+$("f-cancel").addEventListener("click", () => { $("fmodal").hidden = true; folderTarget = null; });
+$("f-name").addEventListener("keydown", e => { if (e.key === "Enter") $("f-ok").click(); });
+$("f-ok").addEventListener("click", async () => {
+  const name = $("f-name").value.trim();
+  const target = folderTarget;
+  if (!name) { $("f-status").textContent = "フォルダ名を入れてな"; $("f-status").className = "err"; return; }
+  if (target && name === target) { $("fmodal").hidden = true; folderTarget = null; return; }
+  $("f-ok").disabled = true; $("f-cancel").disabled = true;
+  $("f-status").innerHTML = '<span class="spin"></span> ' + (target ? "名前を変えてるで…" : "作ってるで…");
+  $("f-status").className = "";
+  try {
+    if (target) await api("PATCH", "/groups/" + encodeURIComponent(target), { name });
+    else await api("POST", "/groups", { name });
+    $("fmodal").hidden = true;
+    folderTarget = null;
+    await loadSpeakers();
+    setStatus(target ? `📁${target} を 📁${name} にしたで！` : `📁${name} を作ったで！声をドラッグで入れてな`, "ok");
+  } catch (e) {
+    $("f-status").textContent = (target ? "名前変更に失敗: " : "作成に失敗: ") + e;
+    $("f-status").className = "err";
+    $("f-ok").disabled = false; $("f-cancel").disabled = false;
+  }
+});
+
+async function delFolder(group) {
+  const n = speakers.filter(s => (s.group || "").trim() === group).length;
+  const yes = await askConfirm(`📁${group} を消す？\n${n ? `中の声 ${n} 人は消えへんで（${NO_GROUP}に戻るだけ）。` : "空のフォルダやで。"}`);
+  if (!yes) return;
+  try {
+    await api("DELETE", "/groups/" + encodeURIComponent(group));
+    await loadSpeakers();
+    setStatus(`📁${group} を消したで${n ? `（声 ${n} 人は${NO_GROUP}に戻した）` : ""}`, "ok");
+  } catch (e) { setStatus("フォルダの削除に失敗: " + e, "err"); }
+}
+
+/* ===== グループを変える（1声=1グループのフォルダ分け。声そのものは触らん） ===== */
+let groupTarget = null;
+function openGroup(s) {
+  groupTarget = s;
+  const cur = (s.group || "").trim();
+  $("g-old").textContent = `${s.name} のいまのグループ: ${cur || NO_GROUP}`;
+  $("g-name").value = cur;
+  // 既存グループを候補に出す（打ち間違いで別グループが増えるのを防ぐ）
+  const dl = $("g-list"); dl.innerHTML = "";
+  for (const g of groupNames()) { const o = document.createElement("option"); o.value = g; dl.appendChild(o); }
+  $("g-status").textContent = ""; $("g-status").className = "";
+  $("g-ok").disabled = false; $("g-cancel").disabled = false;
+  $("gmodal").hidden = false;
+  setTimeout(() => { $("g-name").focus(); $("g-name").select(); }, 50);
+}
+$("g-cancel").addEventListener("click", () => { $("gmodal").hidden = true; groupTarget = null; });
+$("g-name").addEventListener("keydown", e => { if (e.key === "Enter") $("g-ok").click(); });
+$("g-ok").addEventListener("click", async () => {
+  const s = groupTarget;
+  if (!s) return;
+  const group = $("g-name").value.trim();
+  if (group === (s.group || "").trim()) { $("gmodal").hidden = true; groupTarget = null; return; }
+  $("g-ok").disabled = true; $("g-cancel").disabled = true;
+  $("g-status").innerHTML = '<span class="spin"></span> グループを変えてるで…';
+  $("g-status").className = "";
+  try {
+    await api("PATCH", "/speakers/" + encodeURIComponent(s.id), { group });
+    $("gmodal").hidden = true;
+    groupTarget = null;
+    await loadSpeakers();
+    setStatus(group ? `「${s.name}」を 📁${group} に入れたで！` : `「${s.name}」を${NO_GROUP}に戻したで`, "ok");
+  } catch (e) {
+    $("g-status").textContent = "グループ変更に失敗: " + e; $("g-status").className = "err";
+    $("g-ok").disabled = false; $("g-cancel").disabled = false;
   }
 });
 
