@@ -52,6 +52,13 @@ Aratako 氏の日本語特化ローカル TTS。Flow Matching ベース、絵文
   （またはターミナルで `./start_server.sh`）。モデルのロードで16秒前後かかる。
   押されたかどうかは `~/Library/Application Support/com.takataka.irodoristudio/server.log` の
   更新時刻を見れば分かる（起動のたびに作り直される）
+- **サーバは30分無操作で自動終了する（0.4.1〜）**。常駐させっぱなしにすると MPS まわりで
+  実メモリがじわじわ膨らむ（2026-09-07 に18時間48分の稼働で phys_footprint 16GB まで育った。
+  実体はほぼスワップアウトやったが、放置で増え続けるのは確か）。`server.py` の
+  `start_idle_watchdog()` がリクエスト間隔を見張って畳む。変えたいときは
+  `./start_server.sh --idle-timeout 60`（分／`0` で従来どおり常駐）。
+  **走行中のジョブがある間は絶対に落とさへん**（`queued`/`running` を見て延命する）ので、
+  長文レンダーの途中で切れる心配は無い。落ちた後は `./start_server.sh` で立て直すだけ
 
 ## 実測（M5 / 32GB / MPS）
 8秒の音声を生成して合計 12〜17 秒（モデルロード後）。内訳は sample_rf が支配的。

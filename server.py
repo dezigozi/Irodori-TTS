@@ -1062,12 +1062,63 @@ def write_wav_file(path: Path, audio: torch.Tensor, sample_rate: int) -> None:
     os.replace(tmp, path)
 
 
+# ---- アイドル自動終了 -------------------------------------------------------
+# モデルを常駐させとくと MPS まわりで実メモリがじわじわ膨らむ（18時間で16GBまで育った実績あり）。
+# 使われへん時間が続いたら自分から店じまいする。start_server.sh で立て直せばええだけなので。
+_last_activity = time.monotonic()
+_activity_lock = threading.Lock()
+
+
+def touch_activity() -> None:
+    global _last_activity
+    with _activity_lock:
+        _last_activity = time.monotonic()
+
+
+def idle_seconds() -> float:
+    with _activity_lock:
+        return time.monotonic() - _last_activity
+
+
+def start_idle_watchdog(httpd, synth: "SynthServer", timeout_sec: float) -> None:
+    """timeout_sec のあいだ何も来んかったらサーバを畳む。0以下なら常駐のまま。"""
+    if timeout_sec <= 0:
+        log.info("アイドル自動終了: 無効（常駐します）")
+        return
+
+    check_every = min(30.0, max(5.0, timeout_sec / 10))
+
+    def loop() -> None:
+        while True:
+            time.sleep(check_every)
+            # 走ってるジョブがあるうちは絶対に落とさへん（長文レンダーは数分かかる）
+            with synth.jobs_lock:
+                busy = any(j.status in {"queued", "running"} for j in synth.jobs.values())
+            if busy:
+                touch_activity()
+                continue
+            idle = idle_seconds()
+            if idle >= timeout_sec:
+                log.info("%.0f分アクセスが無かったので終了します（再起動は start_server.sh）", idle / 60)
+                # serve_forever を別スレッドから止める。shutdown() は serve_forever と
+                # 同じスレッドから呼ぶとデッドロックするので、必ずこのスレッドで呼ぶ
+                httpd.shutdown()
+                return
+
+    threading.Thread(target=loop, name="idle-watchdog", daemon=True).start()
+    log.info("アイドル自動終了: %.0f分（%.0f秒ごとに確認）", timeout_sec / 60, check_every)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "IrodoriTTS/0.3"
     synth: SynthServer  # ServerRunner が差し込む
 
     def log_message(self, fmt, *args):  # 既定の stderr 直書きを logging に寄せる
         log.debug("%s - %s", self.address_string(), fmt % args)
+
+    def handle_one_request(self):  # リクエストが来るたびアイドル監視の時計を巻き戻す
+        touch_activity()
+        super().handle_one_request()
 
     def _send_json(self, code: int, payload) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -1334,6 +1385,12 @@ def main() -> None:
         default=32,
         help="サンプリング回数。既定40より少し下げて仮ナレ向けに速度を取っている",
     )
+    ap.add_argument(
+        "--idle-timeout",
+        type=float,
+        default=30.0,
+        help="この分数だけリクエストが無かったら自分で終了する（0で常駐）。既定30分",
+    )
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -1352,6 +1409,8 @@ def main() -> None:
     Handler.synth = synth
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     log.info("待ち受け開始: http://%s:%d", args.host, args.port)
+    touch_activity()  # 起動直後を基準にする（モデル読み込みの時間は数えへん）
+    start_idle_watchdog(httpd, synth, args.idle_timeout * 60)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
