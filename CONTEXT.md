@@ -59,6 +59,17 @@ Aratako 氏の日本語特化ローカル TTS。Flow Matching ベース、絵文
   `./start_server.sh --idle-timeout 60`（分／`0` で従来どおり常駐）。
   **走行中のジョブがある間は絶対に落とさへん**（`queued`/`running` を見て延命する）ので、
   長文レンダーの途中で切れる心配は無い。落ちた後は `./start_server.sh` で立て直すだけ
+- **膨らむ原因は MPS が「入力の形ごと」に作業メモリを抱えること（2026-09-24 に特定・修正）**。
+  チャンクごとに長さが違うので、合成のたびに新しい形になって溜まる（修正前は6本で6→32GB、46GBで OOM→全部500）。
+  犯人は `F.scaled_dot_product_attention`（形ごとの MPSGraph、`empty_cache` でも消えへん）と
+  SilentCipher の `BatchNorm2d`。MPS のときだけ `model.py` の `_scaled_dot_product_attention()`（bmm＋softmax）と
+  `watermark.py` の `_BatchNorm2dWithoutGraphCache` に差し替え、合成のたびに `_release_device_memory()`
+  （gc＋`torch.mps.empty_cache`）。修正後は MPS 5.5GB で横ばい・速度も1〜2割速い・音は実質同じ（SNR 116dB）。
+  PyTorch 内部の CPU 側キャッシュは新しい長さ1つにつき約45MB残るので、`--max-footprint-gb`（既定16）を超えて
+  5分無操作・処理中なしのときだけ自分で終了する安全弁を付けた
+- **:3952 は launchd の `com.stackchan.irodori` が持っていることがある**（KeepAlive・`--idle-timeout 0`＝30分の自動終了が効かへん、
+  ログは `/tmp/com.stackchan.irodori.log`）。kill しても立ち上げ直されるので、コードを入れ替えたら
+  `launchctl kickstart -k gui/$(id -u)/com.stackchan.irodori` で再起動する
 
 ## 実測（M5 / 32GB / MPS）
 8秒の音声を生成して合計 12〜17 秒（モデルロード後）。内訳は sample_rf が支配的。

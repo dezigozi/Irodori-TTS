@@ -27,6 +27,49 @@ DURATION_ARCHITECTURES = {
 }
 
 
+def _scaled_dot_product_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    attn_mask: torch.Tensor | None = None,
+    is_causal: bool = False,
+) -> torch.Tensor:
+    """F.scaled_dot_product_attention と同じ計算。MPS のときだけ素の行列積で回す。
+
+    MPS の SDPA（sdpa_general_mps）は入力の形ごとに MPSGraph を作ってキャッシュし、
+    そのグラフが中間バッファを1形あたり数百MB〜1GB抱えたまま**二度と返さへん**
+    （torch.mps.empty_cache() でも消えへん。PyTorch 2.10 で実測）。
+    合成は文章ごとに潜在の長さが変わる＝毎回新しい形なので、常駐サーバやと1リクエストで
+    数GBずつ膨らんで最後は MPS の OOM で全滅してた。
+    行列積＋softmax に分けると中間は普通のテンソル（PyTorch のアロケータ持ち）になるので、
+    使い終わったら返せる。マスクを baddbmm に畳み込むと SDPA の半分くらいの時間で済む（実測）。
+    """
+    if q.device.type != "mps" or is_causal:
+        return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
+    *lead, q_len, head_dim = q.shape
+    k_len = k.shape[-2]
+    q3 = q.reshape(-1, q_len, head_dim)
+    k3 = k.reshape(-1, k_len, head_dim).transpose(1, 2)
+    v3 = v.reshape(-1, k_len, v.shape[-1])
+    scale = head_dim**-0.5
+    if attn_mask is None:
+        scores = torch.bmm(q3, k3) * scale
+    else:
+        if attn_mask.dtype == torch.bool:
+            # False の位置は見えへんようにする（SDPA と同じ）。足し算のマスクにして行列積に畳み込む
+            bias = torch.zeros(attn_mask.shape, dtype=q.dtype, device=q.device)
+            bias.masked_fill_(~attn_mask, float("-inf"))
+        else:
+            bias = attn_mask.to(dtype=q.dtype)
+        bias = bias.expand(*lead, bias.shape[-2], k_len).reshape(-1, bias.shape[-2], k_len)
+        scores = torch.baddbmm(bias, q3, k3, alpha=scale)
+    out = torch.bmm(torch.softmax(scores, dim=-1), v3).reshape(*lead, q_len, v.shape[-1])
+    if attn_mask is not None and attn_mask.dtype == torch.bool:
+        # 全部 False の行（空の caption など）は softmax が NaN になる。SDPA はそこを 0 で返すので揃える
+        out = out.masked_fill(~attn_mask.any(dim=-1, keepdim=True), 0.0)
+    return out
+
+
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
     t = torch.arange(end, dtype=torch.float32)
@@ -190,7 +233,7 @@ class SelfAttention(nn.Module):
         if key_mask is not None:
             attn_mask = key_mask[:, None, None, :]
 
-        y = F.scaled_dot_product_attention(
+        y = _scaled_dot_product_attention(
             q.transpose(1, 2),
             k.transpose(1, 2),
             v.transpose(1, 2),
@@ -403,7 +446,7 @@ class JointAttention(nn.Module):
         attn_mask = torch.cat(context_masks, dim=1)
         attn_mask = attn_mask[:, None, None, :]
 
-        y = F.scaled_dot_product_attention(
+        y = _scaled_dot_product_attention(
             q.transpose(1, 2),
             k.transpose(1, 2),
             v.transpose(1, 2),
@@ -474,7 +517,7 @@ class AttentionPooling(nn.Module):
         q = self.wq(self.q_norm(q)).reshape(bsz, 1, self.heads, self.head_dim)
         k = self.wk(self.k_norm(x)).reshape(bsz, seq_len, self.heads, self.head_dim)
         v = self.wv(x).reshape(bsz, seq_len, self.heads, self.head_dim)
-        y = F.scaled_dot_product_attention(
+        y = _scaled_dot_product_attention(
             q.transpose(1, 2),
             k.transpose(1, 2),
             v.transpose(1, 2),
@@ -530,7 +573,7 @@ class CrossAttentionPooling(nn.Module):
         q = self.wq(self.q_norm(q)).reshape(bsz, 1, self.heads, self.head_dim)
         k = self.wk(self.k_norm(context)).reshape(bsz, seq_len, self.heads, self.head_dim)
         v = self.wv(context).reshape(bsz, seq_len, self.heads, self.head_dim)
-        y = F.scaled_dot_product_attention(
+        y = _scaled_dot_product_attention(
             q.transpose(1, 2),
             k.transpose(1, 2),
             v.transpose(1, 2),

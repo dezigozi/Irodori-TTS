@@ -22,6 +22,9 @@ Gradio を経由せずにモデルを常駐させ、参照音声の latent を�
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.util
+import gc
 import hashlib
 import io
 import json
@@ -30,6 +33,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -425,6 +429,7 @@ class SynthServer:
                         normalize_db=-16.0,
                         ensure_max=True,
                     ).cpu()
+                    self._release_device_memory()
                 if piece.shape[1] == 0:
                     raise ValueError(f"参照音声が空の latent になりました: {clip}")
                 # 読み出し側は (T, D) の2次元を想定している
@@ -779,10 +784,13 @@ class SynthServer:
         req, seed = self._build_design_request(params, text)
         with self.lock:  # モデルは1本しかないので同時実行させない
             t0 = time.perf_counter()
-            result = self.runtime.synthesize(req)
-            elapsed = time.perf_counter() - t0
-        log.info("声デザイン合成 %.2fs seed=%d steps=%d chars=%d",
-                 elapsed, seed, req.num_steps, len(text))
+            try:
+                result = self.runtime.synthesize(req)
+                elapsed = time.perf_counter() - t0
+            finally:  # 失敗（MPS の OOM など）したときこそ溜まったぶんを返しとく
+                mps_gb = self._release_device_memory()
+        log.info("声デザイン合成 %.2fs seed=%d steps=%d chars=%d%s",
+                 elapsed, seed, req.num_steps, len(text), mps_gb)
         return result.audio, int(result.sample_rate), seed
 
     def design_preview(self, params: dict) -> tuple[bytes, int]:
@@ -903,15 +911,32 @@ class SynthServer:
             if tmpdir is not None:
                 shutil.rmtree(tmpdir, ignore_errors=True)
 
+    def _release_device_memory(self) -> str:
+        """合成1回ぶんの使い終わった MPS メモリを OS に返す。self.lock を持ったまま呼ぶこと。
+
+        PyTorch の MPS アロケータは解放したバッファを手元に溜めて使い回すけど、チャンクごとに
+        長さ（＝バッファの大きさ）が違うので使い回しが効かず、1チャンクで2〜3GBずつ溜まっていってた。
+        合成の結果（音）はもう CPU に降りてるので、ここで捨てても次の合成には影響せえへん。
+        戻り値はログに足す「いまの MPS 使用量」の文字列（MPS 以外は空）。
+        """
+        if self.runtime.model_device.type != "mps" and self.runtime.codec_device.type != "mps":
+            return ""
+        gc.collect()
+        torch.mps.empty_cache()
+        return f" mps={torch.mps.driver_allocated_memory() / 2**30:.1f}GB"
+
     def _synth_tensor(self, params: dict, text: str) -> tuple[torch.Tensor, int, Speaker]:
         req, speaker = self._build_request(params, text)
         with self.lock:  # モデルは1本しかないので同時実行させない
             t0 = time.perf_counter()
-            result = self.runtime.synthesize(req)
-            elapsed = time.perf_counter() - t0
+            try:
+                result = self.runtime.synthesize(req)
+                elapsed = time.perf_counter() - t0
+            finally:  # 失敗（MPS の OOM など）したときこそ溜まったぶんを返しとく
+                mps_gb = self._release_device_memory()
         log.info(
-            "合成 %.2fs speaker=%s steps=%d chars=%d",
-            elapsed, speaker.id, req.num_steps, len(text),
+            "合成 %.2fs speaker=%s steps=%d chars=%d%s",
+            elapsed, speaker.id, req.num_steps, len(text), mps_gb,
         )
         return result.audio, int(result.sample_rate), speaker
 
@@ -1067,6 +1092,13 @@ def write_wav_file(path: Path, audio: torch.Tensor, sample_rate: int) -> None:
 # 使われへん時間が続いたら自分から店じまいする。start_server.sh で立て直せばええだけなので。
 _last_activity = time.monotonic()
 _activity_lock = threading.Lock()
+_inflight_requests = 0  # いま処理中のリクエスト数（メモリガードが処理の途中で畳まんように）
+
+# メモリガード: 合成が長さ（形）ごとに作る MPSGraph を PyTorch が一生手放さへんので、
+# 新しい長さのチャンク1つにつき CPU 側で約45MBずつ増える（同じ長さの再合成では増えへん。2026-09-24 実測）。
+# GPU 側の大漏れ（1リクエスト数GB）は直したけど、ここは PyTorch の中なので手が出せへん。
+# launchd 常駐（--idle-timeout 0）でも際限なく育たんよう、膨らんだら手が空いたときに畳んで立て直させる
+MEMORY_GUARD_IDLE_SEC = 300.0  # この秒数リクエストが途切れたら「手が空いた」とみなす
 
 
 def touch_activity() -> None:
@@ -1080,33 +1112,120 @@ def idle_seconds() -> float:
         return time.monotonic() - _last_activity
 
 
-def start_idle_watchdog(httpd, synth: "SynthServer", timeout_sec: float) -> None:
-    """timeout_sec のあいだ何も来んかったらサーバを畳む。0以下なら常駐のまま。"""
-    if timeout_sec <= 0:
+def request_started() -> None:
+    global _inflight_requests, _last_activity
+    with _activity_lock:
+        _inflight_requests += 1
+        _last_activity = time.monotonic()
+
+
+def request_finished() -> None:
+    global _inflight_requests, _last_activity
+    with _activity_lock:
+        _inflight_requests -= 1
+        _last_activity = time.monotonic()
+
+
+def inflight_requests() -> int:
+    with _activity_lock:
+        return _inflight_requests
+
+
+class _RusageInfoV2(ctypes.Structure):
+    # <libproc.h> の struct rusage_info_v2（proc_pid_rusage の RUSAGE_INFO_V2 で埋まる）
+    _fields_ = [("ri_uuid", ctypes.c_uint8 * 16)] + [
+        (name, ctypes.c_uint64)
+        for name in (
+            "ri_user_time", "ri_system_time", "ri_pkg_idle_wkups", "ri_interrupt_wkups",
+            "ri_pageins", "ri_wired_size", "ri_resident_size", "ri_phys_footprint",
+            "ri_proc_start_abstime", "ri_proc_exit_abstime", "ri_child_user_time",
+            "ri_child_system_time", "ri_child_pkg_idle_wkups", "ri_child_interrupt_wkups",
+            "ri_child_pageins", "ri_child_elapsed_abstime", "ri_diskio_bytesread",
+            "ri_diskio_byteswritten",
+        )
+    ]
+
+
+_RUSAGE_INFO_V2 = 2
+_libc = None
+
+
+def phys_footprint_bytes() -> int | None:
+    """このプロセスの phys_footprint（アクティビティモニタの「メモリ」・footprint コマンドと同じ値）。
+
+    GPU（MPS）の分も入る。macOS 以外や読めへんときは None（理由はログに残す）。
+    外部の footprint コマンドは使わず、カーネルに直接聞く（固まる心配が無い）。
+    """
+    global _libc
+    if sys.platform != "darwin":
+        return None
+    try:
+        if _libc is None:
+            _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        info = _RusageInfoV2()
+        rc = _libc.proc_pid_rusage(os.getpid(), _RUSAGE_INFO_V2, ctypes.byref(info))
+    except (OSError, AttributeError) as e:
+        log.warning("メモリ使用量が読めません（proc_pid_rusage）: %s", e)
+        return None
+    if rc != 0:
+        log.warning("メモリ使用量が読めません（proc_pid_rusage rc=%d errno=%d）", rc, ctypes.get_errno())
+        return None
+    return int(info.ri_phys_footprint)
+
+
+def start_idle_watchdog(httpd, synth: "SynthServer", timeout_sec: float, max_footprint_gb: float) -> None:
+    """timeout_sec のあいだ何も来んかったらサーバを畳む。0以下なら常駐のまま。
+
+    max_footprint_gb を超えて膨らんでたら、MEMORY_GUARD_IDLE_SEC 手が空いたところで畳む
+    （launchd 常駐なら KeepAlive がすぐ立て直す。0以下ならメモリガード無し）。
+    """
+    idle_on = timeout_sec > 0
+    guard_on = max_footprint_gb > 0
+    if guard_on and phys_footprint_bytes() is None:
+        log.warning("メモリガード: メモリ使用量が読めへんので無効にします")
+        guard_on = False
+    if not idle_on and not guard_on:
         log.info("アイドル自動終了: 無効（常駐します）")
         return
 
-    check_every = min(30.0, max(5.0, timeout_sec / 10))
+    check_every = min(30.0, max(5.0, timeout_sec / 10)) if idle_on else 30.0
+    limit_bytes = int(max_footprint_gb * 2**30)
 
     def loop() -> None:
         while True:
             time.sleep(check_every)
-            # 走ってるジョブがあるうちは絶対に落とさへん（長文レンダーは数分かかる）
+            # 走ってるジョブ・処理中のリクエストがあるうちは絶対に落とさへん（長文レンダーは数分かかる）
             with synth.jobs_lock:
                 busy = any(j.status in {"queued", "running"} for j in synth.jobs.values())
-            if busy:
+            if busy or inflight_requests() > 0:
                 touch_activity()
                 continue
             idle = idle_seconds()
-            if idle >= timeout_sec:
+            if idle_on and idle >= timeout_sec:
                 log.info("%.0f分アクセスが無かったので終了します（再起動は start_server.sh）", idle / 60)
                 # serve_forever を別スレッドから止める。shutdown() は serve_forever と
                 # 同じスレッドから呼ぶとデッドロックするので、必ずこのスレッドで呼ぶ
                 httpd.shutdown()
                 return
+            if guard_on and idle >= MEMORY_GUARD_IDLE_SEC:
+                fp = phys_footprint_bytes()
+                if fp is not None and fp >= limit_bytes:
+                    log.warning(
+                        "メモリが %.1fGB まで膨らんだ（上限 %.0fGB）ので、手が空いた今のうちに終了します"
+                        "（launchd 常駐ならすぐ立て直ります／手動なら start_server.sh）",
+                        fp / 2**30, max_footprint_gb,
+                    )
+                    httpd.shutdown()
+                    return
 
     threading.Thread(target=loop, name="idle-watchdog", daemon=True).start()
-    log.info("アイドル自動終了: %.0f分（%.0f秒ごとに確認）", timeout_sec / 60, check_every)
+    if idle_on:
+        log.info("アイドル自動終了: %.0f分（%.0f秒ごとに確認）", timeout_sec / 60, check_every)
+    else:
+        log.info("アイドル自動終了: 無効（常駐します）")
+    if guard_on:
+        log.info("メモリガード: %.0fGB を超えたら %.0f秒 手が空いたところで終了", max_footprint_gb,
+                 MEMORY_GUARD_IDLE_SEC)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1117,8 +1236,11 @@ class Handler(BaseHTTPRequestHandler):
         log.debug("%s - %s", self.address_string(), fmt % args)
 
     def handle_one_request(self):  # リクエストが来るたびアイドル監視の時計を巻き戻す
-        touch_activity()
-        super().handle_one_request()
+        request_started()
+        try:
+            super().handle_one_request()
+        finally:
+            request_finished()
 
     def _send_json(self, code: int, payload) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -1391,6 +1513,12 @@ def main() -> None:
         default=30.0,
         help="この分数だけリクエストが無かったら自分で終了する（0で常駐）。既定30分",
     )
+    ap.add_argument(
+        "--max-footprint-gb",
+        type=float,
+        default=16.0,
+        help="メモリ（phys_footprint）がこのGBを超えたら、手が空いたときに自分で終了する（0で無効）。既定16GB",
+    )
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -1410,7 +1538,7 @@ def main() -> None:
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     log.info("待ち受け開始: http://%s:%d", args.host, args.port)
     touch_activity()  # 起動直後を基準にする（モデル読み込みの時間は数えへん）
-    start_idle_watchdog(httpd, synth, args.idle_timeout * 60)
+    start_idle_watchdog(httpd, synth, args.idle_timeout * 60, args.max_footprint_gb)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
