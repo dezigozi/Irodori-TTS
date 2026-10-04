@@ -4,6 +4,8 @@
 # 例: ./say.sh "おはようさん、今日もええ天気やな😊" asa.wav "落ち着いた男性の声で、ゆっくり穏やかに"
 set -euo pipefail
 cd "$(dirname "$0")"
+# Finder やポータルから起動されたアプリの PATH は /usr/bin:/bin しか無く、uv（Homebrew）が見つからへん
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 
 TEXT="${1:?しゃべらせる文章を渡してや}"
 OUT="${2:-outputs/say_$(date +%Y%m%d_%H%M%S).wav}"

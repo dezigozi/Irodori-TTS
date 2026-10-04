@@ -179,13 +179,16 @@ fn launch_server(app: AppHandle) -> Result<ServerStatus, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log2));
+    // GUI 起動の PATH には Homebrew が無く、start_server.sh の uv が見つからずに即死していた
+    widen_path(&mut cmd);
     // 自分のプロセスグループで起動する。アプリを閉じてもサーバは残る（econte とも共用）
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
-    cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("サーバを起動できへん: {e}"))?;
 
     let mut last = status_inner(&app);
@@ -194,6 +197,14 @@ fn launch_server(app: AppHandle) -> Result<ServerStatus, String> {
         last = status_inner(&app);
         if last.running {
             return Ok(last);
+        }
+        // スクリプトが先に死んだら3分待たずにログの中身を返す
+        // （二重起動ガードで exit 0 したときは、別のサーバが応答するのを待ち続ける）
+        if let Ok(Some(code)) = child.try_wait() {
+            if !code.success() {
+                let tail = read_log_tail(app.clone()).unwrap_or_default();
+                return Err(format!("サーバの起動スクリプトが止まった（{code}）:\n{tail}"));
+            }
         }
     }
     Err(format!(

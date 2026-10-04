@@ -3,6 +3,8 @@
 # ポート 3952 は ~/.claude/PORTS.md で irodori-tts に予約済み・固定（別ポートへの繰り上げはしない）
 set -euo pipefail
 cd "$(dirname "$0")"
+# Finder やポータルから起動されたアプリの PATH は /usr/bin:/bin しか無く、uv（Homebrew）が見つからへん
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 
 PORT=3952
 
