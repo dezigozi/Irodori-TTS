@@ -226,6 +226,7 @@
         </span>
       </label>
       <label class="f">速さ <input type="range" id="rate" min="120" max="260" step="10" value="180"><span id="rate-v">1.00x</span></label>
+      <label class="f" title="速さはそのままで声の高さだけ変える（+12で2倍の高さ・早回しっぽい声）">キー <input type="range" id="pitch" min="-12" max="24" step="1" value="0"><span id="pitch-v">±0</span></label>
     </div>
     <div class="row">
       <label class="f" style="flex:1">演技メモ（任意）<input type="text" id="caption" placeholder="例: 落ち着いた声で、ゆっくり穏やかに（入れると抑揚の指定より優先）"></label>
@@ -429,7 +430,7 @@ const { listen } = window.__TAURI__.event;
 const AUDIO_EXT = ["m4a","wav","mp3","aac","flac","ogg","oga","opus","mp4","mov","aiff","aif","caf","wma","webm","mkv"];
 const COLORS = ["#ff8a65","#5fb0ff","#5fd37a","#ffb347","#b07aff","#ff6fa5","#35c5c5"];
 let serverUrl = "http://127.0.0.1:3952";
-let settings = { outputDir: "", speaker: "", expression: "natural", rate: 180 };
+let settings = { outputDir: "", speaker: "", expression: "natural", rate: 180, pitch: 0 };
 let speakers = [];
 let running = false;
 let currentJob = null;
@@ -1558,6 +1559,8 @@ $("expr").addEventListener("click", e => {
   settings.expression = b.dataset.v; persist();
 });
 $("rate").addEventListener("input", () => { $("rate-v").textContent = (Number($("rate").value)/180).toFixed(2) + "x"; settings.rate = Number($("rate").value); persist(); });
+function pitchLabel(n) { return n === 0 ? "±0" : (n > 0 ? "+" : "") + n; }
+$("pitch").addEventListener("input", () => { settings.pitch = Number($("pitch").value); $("pitch-v").textContent = pitchLabel(settings.pitch); persist(); });
 $("outdir-btn").addEventListener("click", async () => {
   const dir = await invoke("plugin:dialog|open", { options: { title: "保存先フォルダ", directory: true, multiple: false, defaultPath: settings.outputDir } });
   if (dir) { settings.outputDir = typeof dir === "string" ? dir : dir.path; persist(); $("outdir").textContent = settings.outputDir; loadOutputs(); }
@@ -1565,7 +1568,9 @@ $("outdir-btn").addEventListener("click", async () => {
 $("outdir-open").addEventListener("click", () => invoke("reveal", { path: settings.outputDir }));
 
 function synthParams(text) {
-  const p = { speaker: settings.speaker, text, expression: settings.expression, rate: settings.rate };
+  // trim_head: 声の前に入る吐息っぽい雑音を削る／denoise: 言葉の間の「ブーン」を消す（スタジオは常に頼む）
+  const p = { speaker: settings.speaker, text, expression: settings.expression, rate: settings.rate,
+              pitch: settings.pitch || 0, trim_head: true, denoise: true };
   const cap = $("caption").value.trim(); if (cap) p.caption = cap;
   return p;
 }
@@ -1672,6 +1677,8 @@ function persist() {
     if (!settings.rate) settings.rate = 180;
     $("outdir").textContent = settings.outputDir; $("outdir").title = settings.outputDir;
     $("rate").value = settings.rate; $("rate-v").textContent = (settings.rate/180).toFixed(2) + "x";
+    if (!Number.isFinite(settings.pitch)) settings.pitch = 0;
+    $("pitch").value = settings.pitch; $("pitch-v").textContent = pitchLabel(settings.pitch);
     $("expr").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === settings.expression));
     // 原稿AI の設定（既定は ChatGPT の terra）
     $("ai-engine").value = settings.aiEngine || "codex";

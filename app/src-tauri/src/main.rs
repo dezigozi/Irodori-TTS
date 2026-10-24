@@ -26,6 +26,9 @@ struct Settings {
     expression: String,
     #[serde(default)]
     rate: Option<f64>,
+    // キー（半音）。速さはそのままで高さだけ変える
+    #[serde(default)]
+    pitch: Option<f64>,
     // 原稿AI（⌘の 🤖 ボタン）の設定
     #[serde(default)]
     ai_engine: String,

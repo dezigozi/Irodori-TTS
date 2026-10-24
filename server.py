@@ -941,13 +941,19 @@ class SynthServer:
         return result.audio, int(result.sample_rate), speaker
 
     @staticmethod
-    def _to_native(audio: torch.Tensor, sr: int) -> torch.Tensor:
-        """モノラル・NATIVE_SAMPLE_RATE に揃える（チャンクを繋ぐ前処理）"""
+    def _to_mono(audio: torch.Tensor) -> torch.Tensor:
+        """CPU・float32・[1, N] に揃える"""
         wav = audio.detach().to("cpu", dtype=torch.float32)
         if wav.ndim == 1:
             wav = wav.unsqueeze(0)
         if wav.shape[0] > 1:
             wav = wav.mean(dim=0, keepdim=True)
+        return wav
+
+    @staticmethod
+    def _to_native(audio: torch.Tensor, sr: int) -> torch.Tensor:
+        """モノラル・NATIVE_SAMPLE_RATE に揃える（チャンクを繋ぐ前処理）"""
+        wav = SynthServer._to_mono(audio)
         if sr != NATIVE_SAMPLE_RATE:
             wav = torchaudio.functional.resample(wav, sr, NATIVE_SAMPLE_RATE)
         return wav
@@ -978,7 +984,9 @@ class SynthServer:
             raise ValueError(f"sample_rate は {sorted(ALLOWED_SAMPLE_RATES)} のどれかにしてください")
         pause_ms = int(params.get("pause_ms", SYNTH_CHUNK_PAUSE_MS) or 0)
         pause_ms = max(0, min(3000, pause_ms))
+        parse_pitch(params)  # 合成に何秒もかける前に、変な値は弾いとく
         audio, sr = self._synth_chunked(params, text, pause_ms)
+        audio = finish_audio(audio, sr, params)
         return to_wav_bytes(audio, sr, out_sr)
 
     # ---------------- 長文レンダー（ジョブ） ----------------
@@ -996,6 +1004,7 @@ class SynthServer:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         # 話者・抑揚の妥当性はここで先に確かめる（ジョブ開始後に失敗すると気づきにくい）
         self._build_request(params, "テスト")
+        parse_pitch(params)
         chunks = split_script(text)
         if not chunks:
             raise ValueError("読み上げる文が見つかりません")
@@ -1029,7 +1038,7 @@ class SynthServer:
                 if pause_ms > 0 and i < len(chunks) - 1:
                     pieces.append(torch.zeros(1, int(NATIVE_SAMPLE_RATE * pause_ms / 1000)))
                 job.done = i + 1
-            full = torch.cat(pieces, dim=1)
+            full = finish_audio(torch.cat(pieces, dim=1), NATIVE_SAMPLE_RATE, params)
             write_wav_file(job.out_path, full, NATIVE_SAMPLE_RATE)
             job.seconds = full.shape[1] / NATIVE_SAMPLE_RATE
             job.status = "done"
@@ -1085,6 +1094,122 @@ def write_wav_file(path: Path, audio: torch.Tensor, sample_rate: int) -> None:
         w.setframerate(sample_rate)
         w.writeframes(pcm)
     os.replace(tmp, path)
+
+
+# ---- 仕上げ（キー変更・頭の雑音削り） -----------------------------------------
+# キーは「早回し」と同じく声の響きごと上げる（asetrate）→ atempo で尺だけ元に戻す。
+# 高くした声をクローンの手本にすると、録音の薄い雑音まで高くなって「吐息」として真似されるので、
+# 手本はふつうの声のまま、出来上がった音のほうを動かす
+PITCH_MIN, PITCH_MAX = -12.0, 24.0
+FINISH_FFMPEG_TRIES = 3
+# 頭の雑音: いちばん大きい所からこれだけ小さい音は「声の前の雑音」とみなして削る
+# 実測: 声のピーク -8dB に対して頭の「スー」は -36dB、子音の立ち上がりは -28dB 前後（2026-10-24）
+HEAD_TRIM_BELOW_PEAK_DB = 20.0
+HEAD_TRIM_KEEP_MS = 80  # 声の直前は少し残す（「こ」「さ」の子音の立ち上がりを食わないように）
+# 言葉の間の雑音: ゲートの線引きは声の大きさからこれだけ下（-22dB で声は平均0.3dB減・雑音は -38→-70dB。
+# 線をもっと上げると語尾の小さい声まで 20dB 以上削れた。2026-10-24 実測）
+DENOISE_GATE_BELOW_VOICE_DB = 22.0
+DENOISE_HIGHPASS_HZ = 60  # 雑音の芯は 40〜80Hz。声の一番低い所（たかたかで 75Hz 前後）は残す
+
+
+def parse_pitch(params: dict) -> float:
+    raw = params.get("pitch", 0) or 0
+    try:
+        pitch = float(raw)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"pitch は半音の数字で渡してください: {raw!r}") from e
+    if not PITCH_MIN <= pitch <= PITCH_MAX:
+        raise ValueError(f"pitch は {PITCH_MIN:g}〜{PITCH_MAX:g} にしてください: {pitch:g}")
+    return pitch
+
+
+def _atempo_chain(tempo: float) -> list[str]:
+    """atempo は1段で 0.5 未満を受けないので、0.5 を重ねて届かせる（+24半音＝0.25倍）"""
+    steps = []
+    while tempo < 0.5:
+        steps.append("atempo=0.5")
+        tempo /= 0.5
+    steps.append(f"atempo={tempo:.6f}")
+    return steps
+
+
+def pitch_filters(sample_rate: int, semitones: float) -> list[str]:
+    """尺はそのまま、キーだけ semitones 半音動かす ffmpeg フィルタ"""
+    shifted_sr = round(sample_rate * 2 ** (semitones / 12))
+    return [f"asetrate={shifted_sr}", f"aresample={sample_rate}",
+            *_atempo_chain(sample_rate / shifted_sr)]
+
+
+def denoise_filters(wav: torch.Tensor, sample_rate: int) -> list[str]:
+    """言葉の間に残る「ブーン」を消す ffmpeg フィルタ。
+    雑音は手本の録音由来で 40〜80Hz が中心（-38dB 前後）。低音カットだけでは 3dB しか下がらへんので、
+    声が無い間だけ絞るゲートと組み合わせる。線引きは声の大きさ（20ms ごとの音量の95%点）から相対で決める"""
+    frame = max(1, sample_rate // 50)
+    n = wav.shape[1] // frame
+    if n == 0:
+        return []
+    rms = wav[0, : n * frame].reshape(n, frame).pow(2).mean(dim=1).sqrt()
+    voice = float(torch.quantile(rms, 0.95))
+    if voice <= 0:
+        return []
+    threshold = min(0.5, voice * 10 ** (-DENOISE_GATE_BELOW_VOICE_DB / 20))
+    return [f"highpass=f={DENOISE_HIGHPASS_HZ}",
+            f"agate=threshold={threshold:.5f}:ratio=50:attack=2:release=200:range=0.001"]
+
+
+def run_ffmpeg_filters(wav: torch.Tensor, sample_rate: int, filters: list[str]) -> torch.Tensor:
+    """モノラル float の [1, N] を ffmpeg のフィルタに通して返す（ファイルを介さずパイプで）"""
+    af = ",".join(filters)
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error",
+           "-f", "f32le", "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
+           "-af", af, "-f", "f32le", "pipe:1"]
+    pcm = wav.contiguous().numpy().tobytes()
+    timeout = 30 + wav.shape[1] / sample_rate  # 実測は1分の音で0.1秒。詰まったときだけ効く余裕
+    last_err = ""
+    for attempt in range(1, FINISH_FFMPEG_TRIES + 1):
+        try:
+            cp = subprocess.run(cmd, input=pcm, capture_output=True, timeout=timeout, check=False)
+        except subprocess.TimeoutExpired:  # run() がタイムアウト時に kill まで面倒を見る
+            last_err = f"タイムアウト（{timeout:.0f}秒）"
+        except FileNotFoundError as e:
+            raise RuntimeError("ffmpeg が見つかりません。brew install ffmpeg してください") from e
+        else:
+            if cp.returncode == 0 and cp.stdout:
+                return torch.frombuffer(bytearray(cp.stdout), dtype=torch.float32).unsqueeze(0)
+            last_err = cp.stderr.decode("utf-8", "replace").strip()[-300:] or f"exit {cp.returncode}"
+        log.warning("仕上げ（ffmpeg）失敗 %d/%d: %s", attempt, FINISH_FFMPEG_TRIES, last_err)
+    raise RuntimeError(f"仕上げ（キー変更・雑音消し / ffmpeg）に失敗しました: {last_err}")
+
+
+def trim_head(audio: torch.Tensor, sample_rate: int) -> torch.Tensor:
+    """声が始まる前の小さい雑音（吐息っぽいスー音）と無音を削る"""
+    wav = SynthServer._to_mono(audio)
+    frame = max(1, sample_rate // 100)  # 10ms
+    n = wav.shape[1] // frame
+    if n == 0:
+        return wav
+    rms = wav[0, : n * frame].reshape(n, frame).pow(2).mean(dim=1).sqrt()
+    peak = float(rms.max())
+    if peak <= 0:
+        return wav
+    loud = (rms >= peak * 10 ** (-HEAD_TRIM_BELOW_PEAK_DB / 20)).nonzero()
+    start = max(0, int(loud[0]) * frame - sample_rate * HEAD_TRIM_KEEP_MS // 1000)
+    return wav[:, start:]
+
+
+def finish_audio(audio: torch.Tensor, sample_rate: int, params: dict) -> torch.Tensor:
+    """呼び出し側が頼んだときだけ仕上げる（econte など今までの呼び出しは素通り）。
+    雑音消しはキー変更の前にかける（雑音ごと高くならんように）。ffmpeg は1回でまとめて通す"""
+    pitch = parse_pitch(params)
+    wav = SynthServer._to_mono(audio)
+    if params.get("trim_head"):
+        wav = trim_head(wav, sample_rate)
+    filters: list[str] = []
+    if params.get("denoise"):
+        filters += denoise_filters(wav, sample_rate)
+    if pitch:
+        filters += pitch_filters(sample_rate, pitch)
+    return run_ffmpeg_filters(wav, sample_rate, filters) if filters else wav
 
 
 # ---- アイドル自動終了 -------------------------------------------------------
@@ -1286,7 +1411,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(
                 200,
                 {
-                    "version": "0.4.1",
+                    "version": "0.4.2",
                     "engine": "irodori-tts",
                     "device": self.synth.device,
                     "checkpoint": self.synth.checkpoint,
