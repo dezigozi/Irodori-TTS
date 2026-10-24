@@ -1495,7 +1495,7 @@ async function runDesignTry(seed) {
   const caption = $("d-cap").value.trim();
   if (!caption) { dStatus("どんな声にしたいか書いてな", "err"); return; }
   $("d-try").disabled = true; $("d-again").disabled = true; $("d-save").disabled = true;
-  dStatus('<span class="spin"></span> 声を作ってるで…（15秒くらい）');
+  dStatus('<span class="spin"></span> 声を作ってるで…（20秒くらい）');
   try {
     const res = await designPreview(caption, seed);
     designSeed = res.seed;

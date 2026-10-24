@@ -176,6 +176,9 @@ caption（文章）→ no_ref で1本の長い音声を生成 → 切り分け�
 - **参照クリップは「1回の生成を切り分けて」作る**（文ごとに作り直さへん）。
   no_ref は text が変わると声も揺れるので、1本録りを ffmpeg で切れば声の同一性が保証される。
   `DESIGN_REF_TEXT`（約100文字）で実測 20.9秒 → 既存の `build_reference_clips` で 10秒×2本
+- **試し聞き（`POST /design`）も `DESIGN_REF_TEXT` を読む**（`DESIGN_PREVIEW_TEXT = DESIGN_REF_TEXT`）。
+  同じ理由で、試し聞きと登録で文が違うと「聞いた声」と「登録された声」が別人になる
+  （ヘリウム声が試し聞き 421Hz → 登録 151Hz。2026-10-24）。文には「ゆっくり」「落ち着いて」など話し方の言葉を入れない
 - **seed を必ず呼び出し側に返す**（`X-Irodori-Seed` ヘッダ／`GET /speakers` の `seed`）。
   caption だけでは声は決まらず seed で別人になる＝ガチャなので、気に入った声を呼び戻す唯一の手段
 - 話者 id は `vox_<epoch>`（ファイル由来の `spk_` と区別する）。`speakers.json` に caption と seed も残す
