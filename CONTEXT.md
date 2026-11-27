@@ -10,6 +10,10 @@ Aratako 氏の日本語特化ローカル TTS。Flow Matching ベース、絵文
   本家の更新を取り込むときは `git fetch upstream && git merge upstream/main`
 - `refs/`（本人の声）と `outputs/` は `.gitignore` で除外。**fork は public なので絶対に声を commit しない**
 - 環境: `uv sync --extra cpu`（macOS では通常の PyPI PyTorch wheel が入り MPS が使える）
+  - ただし今の `.venv` は lock と揃えておらず `uv run --no-sync` 前提。素の `uv sync` は torchao が消え scipy が上がるので打たない
+  - Python は 3.12（2026-11-27 に 3.10 から移行、`.python-version` も 3.12）。作り直すときは旧 venv の `uv pip freeze` をそのまま `uv pip install --no-deps -r` で入れる
+  - 罠: `sentencepiece==0.1.99`（pyproject で `<0.2` 固定）は 3.12 用 wheel が無くソースビルドになり、Homebrew の CMake 4 で落ちる → `CMAKE_POLICY_VERSION_MINIMUM=3.5` を付けて入れる
+  - torchcodec は Homebrew の ffmpeg 9 と合わず import できへん（3.10 の頃から同じ）。推論・サーバ・WebUI は使ってへんので動く
 - デバイス: `mps` が自動で既定になる。精度は MPS/CPU では fp32 のみ（bf16 は CUDA/XPU 専用）
 - モデル: `Aratako/Irodori-TTS-v4.1-Small`（HF キャッシュ `~/.cache/huggingface`、約 7.7GB）
 - ポート: 3950 = 標準WebUI / 3951 = VoiceDesign WebUI（`~/.claude/PORTS.md` に予約済み）
